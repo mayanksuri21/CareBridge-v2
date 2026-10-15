@@ -1,0 +1,14 @@
+---
+description: CareBridge project-wide implementation rules
+alwaysApply: true
+---
+
+- Use JavaScript as the primary language; do not introduce TypeScript unless explicitly approved.
+- Read `docs/PRD.md`, `docs/ARCHITECTURE.md`, and relevant `docs/SECURITY.md` sections before implementing a feature.
+- Inspect only files needed for the current task. Make the smallest safe change and avoid unrelated refactors.
+- Preserve existing behavior and business rules unless the task explicitly changes them.
+- Enforce authorization and validation on the server; never trust client-supplied role, price, payment status, or appointment state.
+- Do not expose secrets in client code or commit credentials.
+- Add or update tests for each behavior change. Do not claim tests passed unless they were run.
+- If a requirement or architecture decision is unresolved, ask or record the decision instead of guessing.
+- Update `TASKS.md` and relevant docs when a phase or major decision changes.
