@@ -25,6 +25,7 @@ import {
   XCircle,
   Info,
   RefreshCw,
+  UserCircle,
 } from "lucide-react";
 
 export default function PatientDashboardShell() {
@@ -160,6 +161,13 @@ export default function PatientDashboardShell() {
               className="hidden sm:inline-flex text-xs font-bold text-brand-emerald hover:text-emerald-700 transition-colors"
             >
               Find Doctors
+            </Link>
+            <Link
+              href="/patient/profile"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-brand-emerald transition-colors"
+            >
+              <UserCircle className="w-3.5 h-3.5 text-brand-emerald" />
+              Profile
             </Link>
             <div className="hidden sm:flex items-center gap-2 text-xs font-semibold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-full">
               <User className="w-3.5 h-3.5 text-brand-emerald" />

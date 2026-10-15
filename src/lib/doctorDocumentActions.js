@@ -12,14 +12,14 @@ export async function uploadDoctorCredentialDocument(formData) {
   try {
     const supabase = createClientServer();
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return { success: false, error: "Authentication session required. Please sign in." };
     }
 
-    const userId = session.user.id;
+    const userId = user.id;
     const applicationId = formData.get("application_id");
     const docType = formData.get("document_type"); // 'nmc_registration_certificate' | 'degree_certificate'
     const file = formData.get("file");

@@ -9,24 +9,24 @@ import { createClientServer } from "./supabase/server";
 async function getVerifiedDoctorSession() {
   const supabase = createClientServer();
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (!session?.user) {
+  if (!user) {
     throw new Error("Authentication required. Please sign in.");
   }
 
   const { data: docApp, error } = await supabase
     .from("doctor_applications")
     .select("*")
-    .eq("user_id", session.user.id)
+    .eq("user_id", user.id)
     .single();
 
   if (error || !docApp || docApp.status !== "approved") {
     throw new Error("Access restricted: Only approved medical practitioners can perform this action.");
   }
 
-  return { supabase, user: session.user, docApp };
+  return { supabase, user, docApp };
 }
 
 /**

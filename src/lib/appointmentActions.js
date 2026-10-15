@@ -102,17 +102,24 @@ export async function bookAppointmentAction({ doctorId, startsAt, reason }) {
   try {
     const supabase = createClientServer();
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return { success: false, error: "Please sign in to book an appointment." };
     }
 
-    // Since there is no appointments table or bookings table in the schema,
-    // we acknowledge the booking for the patient without database failure.
-    const appointmentId = crypto.randomUUID();
-    return { success: true, appointmentId };
+    const { data, error } = await supabase.rpc("book_appointment", {
+      p_doctor_id: doctorId,
+      p_starts_at: startsAt,
+      p_reason: reason || null,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, appointmentId: data };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -125,10 +132,10 @@ export async function getPatientAppointments() {
   try {
     const supabase = createClientServer();
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return { success: false, error: "Authentication required.", appointments: [] };
     }
 
@@ -136,7 +143,7 @@ export async function getPatientAppointments() {
     const { data: appointments, error } = await supabase
       .from("appointments")
       .select("*")
-      .eq("patient_id", session.user.id)
+      .eq("patient_id", user.id)
       .order("starts_at", { ascending: false });
 
     if (error) {
@@ -169,63 +176,54 @@ export async function getPatientAppointments() {
 }
 
 /**
- * Fetches appointments for the authenticated doctor with patient name
+ * Fetches appointments for the authenticated doctor with patient details
+ * (full name, date of birth, gender) joined from public.profiles.
+ *
+ * Patient profiles are protected by RLS (owners + admins only), so a doctor
+ * cannot read them directly. The SECURITY DEFINER RPC `get_doctor_appointments`
+ * returns only the calling doctor's own appointments joined with the patient
+ * profile, exposing just the safe fields the dashboard needs.
  */
 export async function getDoctorAppointments() {
   try {
     const supabase = createClientServer();
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return { success: false, error: "Authentication required.", appointments: [] };
     }
 
-    const { data: appointments, error } = await supabase
-      .from("appointments")
-      .select("*, profiles!appointments_patient_id_fkey(full_name)")
-      .eq("doctor_id", session.user.id)
-      .order("starts_at", { ascending: false });
+    // Primary path: RPC joins appointments.patient_id = profiles.id and enforces
+    // that only the authenticated doctor's appointments are returned.
+    const { data, error } = await supabase.rpc("get_doctor_appointments");
 
-    // Fallback if foreign key join is not aliased
-    let finalAppointments = appointments;
-    if (error) {
-      const { data: rawAppts, error: rawErr } = await supabase
-        .from("appointments")
-        .select("*")
-        .eq("doctor_id", session.user.id)
-        .order("starts_at", { ascending: false });
-
-      if (rawErr) {
-        return { success: false, error: rawErr.message, appointments: [] };
-      }
-
-      // Fetch patient profiles
-      const patientIds = Array.from(new Set((rawAppts || []).map((a) => a.patient_id)));
-      let patientMap = {};
-      if (patientIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("id, full_name")
-          .in("id", patientIds);
-        (profiles || []).forEach((p) => {
-          patientMap[p.id] = p.full_name;
-        });
-      }
-
-      finalAppointments = (rawAppts || []).map((a) => ({
-        ...a,
-        patient_name: patientMap[a.patient_id] || "Patient",
-      }));
-    } else {
-      finalAppointments = (appointments || []).map((a) => ({
-        ...a,
-        patient_name: a.profiles?.full_name || "Patient",
-      }));
+    if (!error && data) {
+      return { success: true, appointments: data };
     }
 
-    return { success: true, appointments: finalAppointments };
+    // Fallback: if the RPC is not deployed yet, still load the doctor's own
+    // appointments (without patient demographics) so the dashboard keeps working.
+    const { data: rawAppts, error: rawErr } = await supabase
+      .from("appointments")
+      .select("*")
+      .eq("doctor_id", user.id)
+      .order("starts_at", { ascending: false });
+
+    if (rawErr) {
+      return { success: false, error: rawErr.message, appointments: [] };
+    }
+
+    return {
+      success: true,
+      appointments: (rawAppts || []).map((a) => ({
+        ...a,
+        patient_name: null,
+        patient_date_of_birth: null,
+        patient_gender: null,
+      })),
+    };
   } catch (err) {
     return { success: false, error: err.message, appointments: [] };
   }
@@ -280,10 +278,10 @@ export async function checkLeaveConflicts(leaveStart, leaveEnd) {
   try {
     const supabase = createClientServer();
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return { success: false, error: "Authentication required.", conflicts: [] };
     }
 
@@ -294,7 +292,7 @@ export async function checkLeaveConflicts(leaveStart, leaveEnd) {
     const { data: conflicts, error } = await supabase
       .from("appointments")
       .select("id, starts_at, ends_at, status, reason")
-      .eq("doctor_id", session.user.id)
+      .eq("doctor_id", user.id)
       .in("status", ["requested", "confirmed"])
       .gte("starts_at", startTs)
       .lte("starts_at", endTs)

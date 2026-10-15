@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   Calendar,
   LogOut,
+  UserCircle,
 } from "lucide-react";
 
 export function Navbar({ onAuthClick }) {
@@ -215,6 +216,14 @@ export function Navbar({ onAuthClick }) {
                         <Calendar className="w-4 h-4 text-slate-400" />
                         My Appointments & History
                       </Link>
+                      <Link
+                        href="/patient/profile"
+                        onClick={() => setDropdownOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-brand-emerald transition-colors"
+                      >
+                        <UserCircle className="w-4 h-4 text-slate-400" />
+                        My Profile
+                      </Link>
                     </div>
 
                     <div className="pt-1 border-t border-slate-100">
@@ -352,6 +361,14 @@ export function Navbar({ onAuthClick }) {
                 >
                   <Calendar className="w-4 h-4 text-brand-emerald" />
                   My Appointments & History
+                </Link>
+                <Link
+                  href="/patient/profile"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="text-base font-semibold text-slate-800 hover:text-brand-emerald py-1 flex items-center gap-2"
+                >
+                  <UserCircle className="w-4 h-4 text-brand-emerald" />
+                  My Profile
                 </Link>
               </>
             ) : (

@@ -8,24 +8,24 @@ import { createClientServer } from "./supabase/server";
 async function verifyAdminCaller() {
   const supabase = createClientServer();
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (!session?.user) {
+  if (!user) {
     throw new Error("Authentication required.");
   }
 
   const { data: adminRecord } = await supabase
     .from("administrators")
     .select("user_id")
-    .eq("user_id", session.user.id)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (!adminRecord) {
     throw new Error("Access denied: Administrator privileges required.");
   }
 
-  return { supabase, adminUser: session.user };
+  return { supabase, adminUser: user };
 }
 
 /**

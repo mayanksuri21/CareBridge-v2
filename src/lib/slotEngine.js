@@ -65,7 +65,7 @@ export function computeDoctorDirectoryAvailability(doctors, schedules, leaves) {
 
     return {
       ...doc,
-      hasActiveSchedule: hasAvailability,
+      hasActiveSchedule: docSchedules.length > 0,
       isOnLeaveToday,
       activeDays,
     };

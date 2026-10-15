@@ -1643,6 +1643,25 @@ export default function DoctorDashboardShell() {
                         year: "numeric",
                       });
 
+                      let patientAge = null;
+                      if (appt.patient_date_of_birth) {
+                        const dob = new Date(appt.patient_date_of_birth);
+                        if (!Number.isNaN(dob.getTime())) {
+                          const today = new Date();
+                          patientAge =
+                            today.getFullYear() -
+                            dob.getFullYear() -
+                            (today.getMonth() < dob.getMonth() ||
+                            (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())
+                              ? 1
+                              : 0);
+                        }
+                      }
+
+                      const genderLabel = appt.patient_gender
+                        ? String(appt.patient_gender).replace(/_/g, " ")
+                        : null;
+
                       return (
                         <div
                           key={appt.id}
@@ -1654,6 +1673,11 @@ export default function DoctorDashboardShell() {
                               <h3 className="text-base font-black text-slate-900">
                                 {appt.patient_name || "Patient"}
                               </h3>
+                              <p className="text-xs text-slate-500">
+                                Age: {patientAge !== null ? `${patientAge} yrs` : "Not provided"}
+                                {" • "}
+                                Gender: {genderLabel || "Not provided"}
+                              </p>
                               <p className="text-xs font-semibold text-brand-emerald">
                                 Fee: ₹{Number(appt.fee_at_booking || doctorApp?.consultation_fee || 0).toFixed(0)}
                               </p>
