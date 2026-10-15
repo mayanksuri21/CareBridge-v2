@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "../../../lib/supabase/client";
 import { Button } from "../../../components/ui/Button";
 import { Badge, Card } from "../../../components/ui/Card";
+import { JoinConsultationButton } from "../../../components/consultation/JoinConsultationButton";
 import {
   HeartPulse,
   Stethoscope,
@@ -1791,19 +1792,22 @@ export default function DoctorDashboardShell() {
                             </p>
                           )}
 
-                          <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                          <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
                             <span className="text-[11px] text-slate-400">
-                              Video chamber will open at scheduled start time.
+                              Join when the consultation window opens.
                             </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={apptActionLoading}
-                              onClick={() => handleCancelDoctorAppointment(appt.id)}
-                              className="text-xs text-rose-700 hover:text-rose-900 border-rose-200 hover:bg-rose-50"
-                            >
-                              Cancel Appointment
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <JoinConsultationButton appointment={appt} />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={apptActionLoading}
+                                onClick={() => handleCancelDoctorAppointment(appt.id)}
+                                className="text-xs text-rose-700 hover:text-rose-900 border-rose-200 hover:bg-rose-50"
+                              >
+                                Cancel Appointment
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1874,15 +1878,18 @@ export default function DoctorDashboardShell() {
                                 </p>
                               )}
                             </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={apptActionLoading}
-                              onClick={() => handleCancelDoctorAppointment(appt.id)}
-                              className="text-xs text-rose-700 hover:text-rose-900 border-rose-200"
-                            >
-                              Cancel
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <JoinConsultationButton appointment={appt} />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={apptActionLoading}
+                                onClick={() => handleCancelDoctorAppointment(appt.id)}
+                                className="text-xs text-rose-700 hover:text-rose-900 border-rose-200"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
                           </div>
                         );
                       })}

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "../../../lib/supabase/client";
 import { Button } from "../../../components/ui/Button";
 import { Badge, Card } from "../../../components/ui/Card";
+import { JoinConsultationButton } from "../../../components/consultation/JoinConsultationButton";
 import {
   getPatientAppointments,
   cancelAppointmentAction,
@@ -356,22 +357,25 @@ export default function PatientDashboardShell() {
                           </div>
                         )}
 
-                        {/* Honest Video Call Notice */}
+                        {/* Video consultation notice */}
                         {appt.status === "confirmed" && (
                           <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3 flex items-start gap-2 text-xs text-blue-900">
                             <Video className="w-4 h-4 text-brand-blue flex-shrink-0 mt-0.5" />
                             <p className="text-[11px]">
-                              Video link will be available in a later phase. Please ensure you are logged in prior to the scheduled slot.
+                              Join from this card when your consultation window opens. Keep this tab signed in before your slot.
                             </p>
                           </div>
                         )}
                       </div>
 
-                      {/* Cancel Action */}
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400">
-                          {appt.status === "requested" ? "Awaiting doctor response" : "Slot reserved"}
-                        </span>
+                      {/* Actions */}
+                      <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-400">
+                            {appt.status === "requested" ? "Awaiting doctor response" : "Slot reserved"}
+                          </span>
+                          {appt.status === "confirmed" && <JoinConsultationButton appointment={appt} />}
+                        </div>
                         <Button
                           variant="outline"
                           size="sm"
