@@ -22,6 +22,7 @@
     "clsx": "^2.1.1",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.15",
+    "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^1.57.0",
     "next": "^14.2.15",
     "postcss": "^8.5.30",
