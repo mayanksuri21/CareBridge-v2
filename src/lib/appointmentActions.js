@@ -179,10 +179,11 @@ export async function getPatientAppointments() {
  * Fetches appointments for the authenticated doctor with patient details
  * (full name, date of birth, gender) joined from public.profiles.
  *
- * Patient profiles are protected by RLS (owners + admins only), so a doctor
- * cannot read them directly. The SECURITY DEFINER RPC `get_doctor_appointments`
- * returns only the calling doctor's own appointments joined with the patient
- * profile, exposing just the safe fields the dashboard needs.
+ * Implements three safe data-access pathways in priority order:
+ * 1. PostgREST resource embedding: joins appointments.patient_id = profiles.id
+ * 2. SECURITY DEFINER RPC: `get_doctor_appointments`
+ * 3. Two-step query: fetches the doctor's appointments, then queries patient profiles
+ *    under the doctor-scoped RLS policy.
  */
 export async function getDoctorAppointments() {
   try {
@@ -195,16 +196,41 @@ export async function getDoctorAppointments() {
       return { success: false, error: "Authentication required.", appointments: [] };
     }
 
-    // Primary path: RPC joins appointments.patient_id = profiles.id and enforces
-    // that only the authenticated doctor's appointments are returned.
-    const { data, error } = await supabase.rpc("get_doctor_appointments");
+    // Pathway 1: PostgREST resource embedding join (appointments_patient_id_profiles_fkey)
+    const { data: joinedAppts, error: joinErr } = await supabase
+      .from("appointments")
+      .select(`
+        *,
+        profiles!appointments_patient_id_profiles_fkey (
+          id,
+          full_name,
+          date_of_birth,
+          gender
+        )
+      `)
+      .eq("doctor_id", user.id)
+      .order("starts_at", { ascending: false });
 
-    if (!error && data) {
-      return { success: true, appointments: data };
+    if (!joinErr && joinedAppts) {
+      const enriched = joinedAppts.map((appt) => {
+        const p = appt.profiles;
+        return {
+          ...appt,
+          patient_name: p?.full_name || null,
+          patient_date_of_birth: p?.date_of_birth || null,
+          patient_gender: p?.gender || null,
+        };
+      });
+      return { success: true, appointments: enriched };
     }
 
-    // Fallback: if the RPC is not deployed yet, still load the doctor's own
-    // appointments (without patient demographics) so the dashboard keeps working.
+    // Pathway 2: SECURITY DEFINER RPC
+    const { data: rpcData, error: rpcErr } = await supabase.rpc("get_doctor_appointments");
+    if (!rpcErr && rpcData) {
+      return { success: true, appointments: rpcData };
+    }
+
+    // Pathway 3: Doctor appointments + patient profiles scoped by RLS
     const { data: rawAppts, error: rawErr } = await supabase
       .from("appointments")
       .select("*")
@@ -215,15 +241,33 @@ export async function getDoctorAppointments() {
       return { success: false, error: rawErr.message, appointments: [] };
     }
 
-    return {
-      success: true,
-      appointments: (rawAppts || []).map((a) => ({
-        ...a,
-        patient_name: null,
-        patient_date_of_birth: null,
-        patient_gender: null,
-      })),
-    };
+    const patientIds = Array.from(
+      new Set((rawAppts || []).map((a) => a.patient_id).filter(Boolean))
+    );
+
+    let profileMap = {};
+    if (patientIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, date_of_birth, gender")
+        .in("id", patientIds);
+
+      (profiles || []).forEach((p) => {
+        profileMap[p.id] = p;
+      });
+    }
+
+    const enriched = (rawAppts || []).map((appt) => {
+      const p = profileMap[appt.patient_id];
+      return {
+        ...appt,
+        patient_name: p?.full_name || null,
+        patient_date_of_birth: p?.date_of_birth || null,
+        patient_gender: p?.gender || null,
+      };
+    });
+
+    return { success: true, appointments: enriched };
   } catch (err) {
     return { success: false, error: err.message, appointments: [] };
   }

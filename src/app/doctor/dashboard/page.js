@@ -1658,8 +1658,10 @@ export default function DoctorDashboardShell() {
                         }
                       }
 
-                      const genderLabel = appt.patient_gender
-                        ? String(appt.patient_gender).replace(/_/g, " ")
+                      const formattedGender = appt.patient_gender
+                        ? String(appt.patient_gender)
+                            .replace(/_/g, " ")
+                            .replace(/\b\w/g, (c) => c.toUpperCase())
                         : null;
 
                       return (
@@ -1674,9 +1676,9 @@ export default function DoctorDashboardShell() {
                                 {appt.patient_name || "Patient"}
                               </h3>
                               <p className="text-xs text-slate-500">
-                                Age: {patientAge !== null ? `${patientAge} yrs` : "Not provided"}
+                                Age: {patientAge !== null && patientAge >= 0 ? `${patientAge} yrs` : "Not provided"}
                                 {" • "}
-                                Gender: {genderLabel || "Not provided"}
+                                Gender: {formattedGender || "Not provided"}
                               </p>
                               <p className="text-xs font-semibold text-brand-emerald">
                                 Fee: ₹{Number(appt.fee_at_booking || doctorApp?.consultation_fee || 0).toFixed(0)}

@@ -33,6 +33,12 @@ export async function getPatientProfile() {
       email: user.email || "",
     };
 
+    const derivedName =
+      meta.full_name ||
+      meta.name ||
+      (meta.given_name ? `${meta.given_name} ${meta.family_name || ""}`.trim() : "") ||
+      (user.email ? user.email.split("@")[0] : "");
+
     // If the profile row is missing, present a safe, metadata-derived fallback.
     if (!profile) {
       return {
@@ -40,10 +46,7 @@ export async function getPatientProfile() {
         profile: {
           id: user.id,
           role: "patient",
-          full_name:
-            meta.full_name ||
-            meta.name ||
-            (user.email ? user.email.split("@")[0] : ""),
+          full_name: derivedName || "Patient",
           email: user.email || "",
           phone: null,
           preferred_language: "en",
@@ -70,6 +73,7 @@ export async function getPatientProfile() {
 /**
  * Updates a patient's own profile demographic fields.
  * Prevents changing role, email, or tampering with unauthorized records.
+ * Safely creates the profile row if missing without breaking RLS.
  */
 export async function updatePatientProfile(formData) {
   try {
@@ -110,27 +114,53 @@ export async function updatePatientProfile(formData) {
       return { success: false, error: "Please select a valid gender." };
     }
 
-    // Only update safe fields. Never allow changing role or email.
-    const { data, error } = await supabase
+    // Check if profile exists; insert if missing (e.g. signup trigger didn't run)
+    const { data: existingProfile } = await supabase
       .from("profiles")
-      .update({
-        full_name: fullName,
-        phone,
-        preferred_language: preferredLanguage,
-        date_of_birth: dateOfBirth,
-        gender,
-        state,
-        district,
-      })
+      .select("id")
       .eq("id", user.id)
-      .select()
-      .single();
+      .maybeSingle();
 
-    if (error) {
-      return { success: false, error: error.message };
+    let result;
+    if (existingProfile) {
+      result = await supabase
+        .from("profiles")
+        .update({
+          full_name: fullName,
+          phone,
+          preferred_language: preferredLanguage,
+          date_of_birth: dateOfBirth,
+          gender,
+          state,
+          district,
+        })
+        .eq("id", user.id)
+        .select()
+        .single();
+    } else {
+      result = await supabase
+        .from("profiles")
+        .insert({
+          id: user.id,
+          role: "patient",
+          email: user.email || "",
+          full_name: fullName,
+          phone,
+          preferred_language: preferredLanguage,
+          date_of_birth: dateOfBirth,
+          gender,
+          state,
+          district,
+        })
+        .select()
+        .single();
     }
 
-    return { success: true, data };
+    if (result.error) {
+      return { success: false, error: result.error.message };
+    }
+
+    return { success: true, data: result.data };
   } catch (err) {
     return { success: false, error: err.message || "Failed to update profile." };
   }
