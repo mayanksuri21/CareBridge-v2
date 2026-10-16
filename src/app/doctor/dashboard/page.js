@@ -1797,7 +1797,7 @@ export default function DoctorDashboardShell() {
                               Join when the consultation window opens.
                             </span>
                             <div className="flex items-center gap-2">
-                              <JoinConsultationButton appointment={appt} />
+                              <JoinConsultationButton appointment={appt} isDoctor={true} />
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1879,7 +1879,7 @@ export default function DoctorDashboardShell() {
                               )}
                             </div>
                             <div className="flex items-center gap-2">
-                              <JoinConsultationButton appointment={appt} />
+                              <JoinConsultationButton appointment={appt} isDoctor={true} />
                               <Button
                                 variant="outline"
                                 size="sm"

@@ -50,11 +50,9 @@ export default function PatientConsultationAlerts({ appointments = [], userId })
     [appointments]
   );
 
-  // Appointments inside the consultation join window (used for presence polls).
-  const inWindowAppointments = useMemo(
-    () => confirmedAppointments.filter((a) => getConsultationState(a, now).canJoin),
-    [confirmedAppointments, now]
-  );
+  // Appointments polled for room presence (for testing, poll all confirmed appointments so
+  // doctor arrival is detected immediately without waiting for scheduled time).
+  const inWindowAppointments = confirmedAppointments;
 
   const inWindowKey = useMemo(
     () => inWindowAppointments.map((a) => a.id).sort().join(","),
@@ -177,10 +175,9 @@ export default function PatientConsultationAlerts({ appointments = [], userId })
   const arrivalEntries = useMemo(() => {
     return Object.entries(arrivals).filter(([id]) => {
       const appointment = appointmentsById.get(id);
-      if (!appointment || appointment.status !== "confirmed") return false;
-      return getConsultationState(appointment, now).canJoin;
+      return appointment && appointment.status === "confirmed";
     });
-  }, [arrivals, appointmentsById, now]);
+  }, [arrivals, appointmentsById]);
 
   const hasReminders = visibleReminders.length > 0;
   const hasArrivals = arrivalEntries.length > 0;
@@ -213,14 +210,12 @@ export default function PatientConsultationAlerts({ appointments = [], userId })
                 </p>
               </div>
             </div>
-            {state.canJoin && (
-              <Link
-                href={`/consultation/${appointmentId}`}
-                className="inline-flex items-center justify-center rounded-xl bg-brand-emerald px-4 py-2 text-xs font-bold text-white hover:opacity-90"
-              >
-                Join consultation
-              </Link>
-            )}
+            <Link
+              href={`/consultation/${appointmentId}`}
+              className="inline-flex items-center justify-center rounded-xl bg-brand-emerald px-4 py-2 text-xs font-bold text-white hover:opacity-90"
+            >
+              Join consultation
+            </Link>
           </div>
         );
       })}

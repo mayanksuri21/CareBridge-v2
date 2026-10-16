@@ -133,7 +133,7 @@ export default function ConsultationPage() {
         if (state?.doctorName) setDoctorName(state.doctorName);
         setDoctorPresent(Boolean(state?.doctorPresent));
 
-        if (state?.admitted && !upgradingRef.current) {
+        if ((state?.admitted || state?.doctorPresent) && !upgradingRef.current) {
           upgradingRef.current = true;
           const upgraded = await requestToken();
           // If the server still reports "waiting" (e.g. a race), allow retrying.

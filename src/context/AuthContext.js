@@ -35,29 +35,41 @@ export function AuthProvider({ children }) {
     setUser(currentUser);
 
     try {
-      // 1. Fetch user profile
-      const { data: profData } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", currentUser.id)
-        .single();
-      setProfile(profData || null);
+      const [profRes, adminRes, docRes] = await Promise.allSettled([
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", currentUser.id)
+          .maybeSingle(),
+        supabase
+          .from("administrators")
+          .select("user_id")
+          .eq("user_id", currentUser.id)
+          .maybeSingle(),
+        supabase
+          .from("doctor_applications")
+          .select("*")
+          .eq("user_id", currentUser.id)
+          .maybeSingle(),
+      ]);
 
-      // 2. Check if admin
-      const { data: adminData } = await supabase
-        .from("administrators")
-        .select("user_id")
-        .eq("user_id", currentUser.id)
-        .maybeSingle();
-      setIsAdmin(!!adminData);
+      if (profRes.status === "fulfilled" && profRes.value?.data) {
+        setProfile(profRes.value.data);
+      } else {
+        setProfile(null);
+      }
 
-      // 3. Check doctor application
-      const { data: docData } = await supabase
-        .from("doctor_applications")
-        .select("*")
-        .eq("user_id", currentUser.id)
-        .maybeSingle();
-      setDoctorApp(docData || null);
+      if (adminRes.status === "fulfilled" && adminRes.value?.data) {
+        setIsAdmin(true);
+      } else {
+        setIsAdmin(false);
+      }
+
+      if (docRes.status === "fulfilled" && docRes.value?.data) {
+        setDoctorApp(docRes.value.data);
+      } else {
+        setDoctorApp(null);
+      }
     } catch {
       // Supabase connection or table not set up yet
     } finally {
@@ -68,24 +80,22 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let mounted = true;
 
-    async function initAuth() {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+    // 1. Initial check
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
         if (mounted) {
-          await loadUserData(session?.user || null);
+          loadUserData(session?.user || null);
         }
-      } catch {
+      })
+      .catch(() => {
         if (mounted) setLoading(false);
-      }
-    }
+      });
 
-    initAuth();
-
+    // 2. Continuous auth subscription
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (mounted) {
         await loadUserData(session?.user || null);
       }

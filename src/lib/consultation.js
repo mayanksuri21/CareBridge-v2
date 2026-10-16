@@ -30,15 +30,30 @@ export function getWaitingRoomName(appointmentId) {
  *
  * @param {{ status?: string, starts_at?: string, ends_at?: string }} appointment
  * @param {number} [now] - current epoch ms (defaults to Date.now())
+ * @param {boolean | { isDoctor?: boolean, doctorPresent?: boolean }} [options] - role or presence options
  * @returns {{ canJoin: boolean, reason: string | null }}
  */
-export function getConsultationState(appointment, now = Date.now()) {
+export function getConsultationState(appointment, now = Date.now(), options = {}) {
   if (!appointment) {
     return { canJoin: false, reason: "unavailable" };
   }
 
   if (appointment.status !== "confirmed") {
     return { canJoin: false, reason: "not_confirmed" };
+  }
+
+  const isDoctor = typeof options === "boolean" ? options : Boolean(options?.isDoctor);
+  const doctorPresent = typeof options === "object" ? Boolean(options?.doctorPresent) : false;
+
+  // Temporary testing bypass:
+  // 1. As soon as doctor accepts & confirms, doctor can Start Consultation immediately.
+  if (isDoctor) {
+    return { canJoin: true, reason: null };
+  }
+
+  // 2. Once the doctor joins the room, patient gets the Join Consultation affordance immediately.
+  if (doctorPresent) {
+    return { canJoin: true, reason: null };
   }
 
   const startsAt = new Date(appointment.starts_at).getTime();
@@ -60,8 +75,8 @@ export function getConsultationState(appointment, now = Date.now()) {
 }
 
 /** True when the appointment is inside the consultation time window. */
-export function isWithinConsultationWindow(appointment, now = Date.now()) {
-  return getConsultationState(appointment, now).canJoin;
+export function isWithinConsultationWindow(appointment, now = Date.now(), options = {}) {
+  return getConsultationState(appointment, now, options).canJoin;
 }
 
 function formatTimeIST(iso) {

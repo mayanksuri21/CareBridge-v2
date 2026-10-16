@@ -10,6 +10,7 @@ import {
   getPatientProfile,
   updatePatientProfile,
 } from "../../../lib/patientActions";
+import { createClient } from "../../../lib/supabase/client";
 import {
   HeartPulse,
   User,
@@ -87,12 +88,34 @@ export default function PatientProfilePage() {
 
         if (!res.success) {
           if (!active) return;
-          // Not authenticated -> send to login
-          if (res.error && res.error.toLowerCase().includes("sign in")) {
+          const supabase = createClient();
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.user) {
             router.push("/patient/login");
             return;
           }
-          setLoadError(res.error || "Unable to load your profile.");
+
+          // Client-side fallback if SSR cookie sync has not propagated
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", session.user.id)
+            .maybeSingle();
+
+          if (!active) return;
+          const meta = session.user.user_metadata || {};
+          setEmail(prof?.email || session.user.email || "");
+          setAvatarUrl(meta.avatar_url || meta.picture || null);
+          setNeedsInit(!prof);
+          setForm({
+            full_name: prof?.full_name || meta.full_name || meta.name || "",
+            phone: prof?.phone || "",
+            date_of_birth: prof?.date_of_birth || "",
+            gender: prof?.gender || "",
+            preferred_language: prof?.preferred_language || "en",
+            state: prof?.state || "",
+            district: prof?.district || "",
+          });
           setLoading(false);
           return;
         }
@@ -120,8 +143,19 @@ export default function PatientProfilePage() {
     }
 
     loadProfile();
+
+    const supabase = createClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT" && active) {
+        router.push("/patient/login");
+      }
+    });
+
     return () => {
       active = false;
+      subscription?.unsubscribe();
     };
   }, [router]);
 

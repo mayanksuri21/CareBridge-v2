@@ -106,12 +106,8 @@ export async function GET(request) {
   const startsAt = new Date(appointment.starts_at).getTime();
   const endsAt = new Date(appointment.ends_at).getTime();
   const now = Date.now();
-  const windowOpen =
-    appointment.status === "confirmed" &&
-    !Number.isNaN(startsAt) &&
-    !Number.isNaN(endsAt) &&
-    now >= startsAt - JOIN_GRACE_BEFORE_MS &&
-    now <= endsAt + JOIN_GRACE_AFTER_MS;
+  // Temporary for LiveKit testing: window is open for confirmed appointments without waiting for scheduled time
+  const windowOpen = appointment.status === "confirmed";
 
   const roomClient = new RoomServiceClient(toHttpHost(livekitUrl), apiKey, apiSecret);
 
@@ -129,6 +125,10 @@ export async function GET(request) {
     const doctor = activeParticipants.find((p) => p.identity === appointment.doctor_id);
     payload.doctorPresent = Boolean(doctor);
     if (doctor?.name) payload.doctorName = doctor.name;
+    // For testing: once the doctor joins the room, patient is automatically admitted to the room
+    if (doctor) {
+      payload.admitted = true;
+    }
   } else {
     const waitingParticipants = await listParticipants(roomClient, getWaitingRoomName(appointment.id));
     const patient = waitingParticipants.find((p) => p.identity === appointment.patient_id);

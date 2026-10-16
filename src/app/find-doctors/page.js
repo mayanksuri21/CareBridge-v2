@@ -6,36 +6,39 @@ import { Navbar } from "../../components/layout/Navbar";
 import { Footer } from "../../components/layout/Footer";
 import { DoctorDiscovery } from "../../components/sections/DoctorDiscovery";
 import { createClient } from "../../lib/supabase/client";
+import { useAuth } from "../../context/AuthContext";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 
 export default function FindDoctorsPage() {
   const router = useRouter();
-  const [supabase] = useState(() => createClient());
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { user: authUser, loading: authLoading } = useAuth();
+  const [user, setUser] = useState(authUser);
+  const [loading, setLoading] = useState(authLoading);
 
   useEffect(() => {
-    async function checkSession() {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.user) {
-          setUser(null);
-        } else {
-          setUser(session.user);
-        }
-      } catch (err) {
-        console.error("Session check error:", err);
-      } finally {
-        setLoading(false);
-      }
+    if (authUser) {
+      setUser(authUser);
+      setLoading(false);
+    } else if (!authLoading) {
+      setUser(null);
+      setLoading(false);
     }
+  }, [authUser, authLoading]);
 
-    checkSession();
-  }, [supabase]);
+  useEffect(() => {
+    const supabase = createClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+      setLoading(false);
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   if (loading) {
     return (

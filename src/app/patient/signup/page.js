@@ -20,6 +20,14 @@ export default function PatientSignupPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  React.useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        router.push("/patient/dashboard");
+      }
+    });
+  }, [router, supabase]);
+
   const handleSignup = async (e) => {
     e.preventDefault();
     setErrorMsg("");

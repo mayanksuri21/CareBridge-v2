@@ -29,6 +29,19 @@ export async function updateSession(request) {
     },
   });
 
-  // IMPORTANT: Avoid calling `supabase.auth.getUser()` if credentials are placeholders during build
+  // Refresh session cookies for SSR and navigation if valid credentials exist
+  if (
+    supabaseUrl &&
+    !supabaseUrl.includes("placeholder") &&
+    supabaseKey &&
+    !supabaseKey.includes("placeholder")
+  ) {
+    try {
+      await supabase.auth.getUser();
+    } catch {
+      // Safe fallback if network error or session invalid
+    }
+  }
+
   return { supabase, response: supabaseResponse };
 }

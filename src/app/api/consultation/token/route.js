@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
 import { createClientServer } from "../../../../lib/supabase/server";
 import {
   JOIN_GRACE_BEFORE_MS,
@@ -22,6 +22,19 @@ const UUID_RE =
 
 function fail(status, code, message) {
   return NextResponse.json({ error: code, message }, { status });
+}
+
+function toHttpHost(url) {
+  return url.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://");
+}
+
+async function listParticipants(roomClient, roomName) {
+  try {
+    const participants = await roomClient.listParticipants(roomName);
+    return participants.map((p) => ({ identity: p.identity, name: p.name || "" }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -177,12 +190,17 @@ export async function POST(request) {
   }
 
   const now = Date.now();
+  // TEMPORARY FOR LIVEKIT TESTING:
+  // Do not wait for the scheduled time window. As soon as the doctor Accepts & Confirms,
+  // the doctor can start immediately, and the patient can join once the doctor is in the room.
+  /*
   if (now < startsAt - JOIN_GRACE_BEFORE_MS) {
     return fail(409, "consultation_not_started", "This consultation has not started yet.");
   }
   if (now > endsAt + JOIN_GRACE_AFTER_MS) {
     return fail(409, "consultation_ended", "This consultation window has ended.");
   }
+  */
 
   // --- 7. Derive opaque, stable room names (no PII) ------------------------
   const roomName = getConsultationRoomName(appointment.id);
@@ -202,7 +220,11 @@ export async function POST(request) {
     endsAt + JOIN_GRACE_AFTER_MS - now,
     MIN_TOKEN_TTL_SECONDS * 1000
   );
-  const ttlSeconds = Math.min(Math.ceil(msRemaining / 1000), MAX_TOKEN_TTL_SECONDS);
+  // Guarantee at least 1 hour for testing
+  const ttlSeconds = Math.max(
+    3600,
+    Math.min(Math.ceil(msRemaining / 1000), MAX_TOKEN_TTL_SECONDS)
+  );
 
   try {
     // --- 8a. Waiting room (patients only, until the doctor admits them) ----
@@ -220,7 +242,13 @@ export async function POST(request) {
         return fail(500, "admission_lookup_failed", "Could not verify your consultation access.");
       }
 
-      if (!admission) {
+      // Check if doctor is present in the active consultation room
+      const roomClient = new RoomServiceClient(toHttpHost(livekitUrl), apiKey, apiSecret);
+      const activeParticipants = await listParticipants(roomClient, roomName);
+      const isDoctorInRoom = activeParticipants.some((p) => p.identity === appointment.doctor_id);
+
+      // FOR TESTING: If doctor has joined the room or patient is admitted, allow patient into active room!
+      if (!admission && !isDoctorInRoom) {
         const waitingToken = new AccessToken(apiKey, apiSecret, {
           identity,
           name: displayName,

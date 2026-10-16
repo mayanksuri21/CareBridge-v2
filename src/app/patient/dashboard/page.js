@@ -63,35 +63,67 @@ export default function PatientDashboardShell() {
   };
 
   useEffect(() => {
-    async function loadPatient() {
+    let mounted = true;
+
+    async function loadPatient(currentUser) {
+      if (!currentUser) {
+        if (mounted) router.push("/patient/login");
+        return;
+      }
+
+      if (mounted) setUser(currentUser);
+
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!session?.user) {
-          router.push("/patient/login");
-          return;
-        }
-
-        setUser(session.user);
-
         const { data: prof } = await supabase
           .from("profiles")
           .select("*")
-          .eq("id", session.user.id)
-          .single();
+          .eq("id", currentUser.id)
+          .maybeSingle();
 
-        setProfile(prof || null);
-        loadAppointments();
+        if (mounted) {
+          setProfile(prof || null);
+          loadAppointments();
+        }
       } catch (err) {
         console.error("Dashboard init error:", err);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     }
 
-    loadPatient();
+    // 1. Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (mounted) {
+        if (session?.user) {
+          loadPatient(session.user);
+        } else {
+          // Allow onAuthStateChange to fire if session is restoring from storage
+          const timer = setTimeout(() => {
+            if (mounted && !user) {
+              router.push("/patient/login");
+            }
+          }, 600);
+          return () => clearTimeout(timer);
+        }
+      }
+    });
+
+    // 2. Listen to session changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+      if (session?.user) {
+        loadPatient(session.user);
+      } else if (event === "SIGNED_OUT") {
+        router.push("/patient/login");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const handleSignOut = async () => {
