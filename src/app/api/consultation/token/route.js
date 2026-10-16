@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { AccessToken } from "livekit-server-sdk";
 import { createClientServer } from "../../../../lib/supabase/server";
+import {
+  JOIN_GRACE_BEFORE_MS,
+  JOIN_GRACE_AFTER_MS,
+  getConsultationRoomName,
+  getWaitingRoomName,
+} from "../../../../lib/consultation";
 
 // livekit-server-sdk requires the Node.js runtime (it is not Edge-compatible),
 // and this handler reads auth cookies, so it must always run dynamically.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// A participant may request a token slightly before the slot begins and for a
-// short grace period after it ends, to cover joining early / running over.
-const JOIN_GRACE_BEFORE_MS = 15 * 60 * 1000; // 15 minutes before starts_at
-const JOIN_GRACE_AFTER_MS = 30 * 60 * 1000; // 30 minutes after ends_at
 
 // Token lifetime bounds (the token only needs to cover the remaining window).
 const MIN_TOKEN_TTL_SECONDS = 10 * 60; // 10 minutes
@@ -21,6 +22,54 @@ const UUID_RE =
 
 function fail(status, code, message) {
   return NextResponse.json({ error: code, message }, { status });
+}
+
+/**
+ * Adds a "Dr." prefix only when the stored name does not already carry one.
+ *
+ * doctor_applications.full_name is free text and is commonly saved as
+ * "Dr. Rahul Sharma". Prefixing unconditionally produced a doubled
+ * "Dr. Dr. Rahul Sharma" on the video tile, in the waiting room, and in the
+ * doctor-arrival alert.
+ */
+function withDoctorPrefix(name) {
+  const trimmed = String(name ?? "").trim();
+  if (!trimmed) return null;
+  return /^dr\.?\s/i.test(trimmed) ? trimmed : `Dr. ${trimmed}`;
+}
+
+/**
+ * Resolves the participant's display name from trusted server-side records.
+ * The browser never supplies it. Identity always stays the opaque user UUID.
+ */
+async function resolveDisplayName(supabase, user, isDoctor) {
+  if (isDoctor) {
+    // Reuses the existing SECURITY DEFINER helper; it returns a row only for
+    // approved doctors, which the caller must already be at this point.
+    const { data } = await supabase.rpc("get_approved_doctor_by_id", {
+      target_doctor_id: user.id,
+    });
+    const fullName = Array.isArray(data) ? data[0]?.full_name : null;
+    return withDoctorPrefix(fullName) || "Doctor";
+  }
+
+  // RLS on public.profiles lets a user read their own row.
+  const { data } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const fullName = (data?.full_name || "").trim();
+  if (fullName) return fullName;
+
+  // Fallback only when a name is genuinely unavailable (e.g. OAuth metadata
+  // never landed in profiles and none of it is usable).
+  const meta = user.user_metadata || {};
+  const metaName = meta.full_name || meta.name;
+  if (metaName) return String(metaName);
+
+  return user.email ? user.email.split("@")[0] : "Patient";
 }
 
 /**
@@ -135,11 +184,18 @@ export async function POST(request) {
     return fail(409, "consultation_ended", "This consultation window has ended.");
   }
 
-  // --- 7. Derive an opaque, stable room name (no PII) ----------------------
-  const roomName = `consultation_${appointment.id}`;
+  // --- 7. Derive opaque, stable room names (no PII) ------------------------
+  const roomName = getConsultationRoomName(appointment.id);
+  const waitingRoomName = getWaitingRoomName(appointment.id);
 
   // Identity is the opaque user id only; no names or emails.
   const identity = user.id;
+
+  // Display name comes from trusted server-side records (never the browser).
+  const displayName = await resolveDisplayName(supabase, user, isAssignedDoctor);
+  const doctorName = isAssignedDoctor
+    ? displayName
+    : await resolveDisplayName(supabase, { ...user, id: appointment.doctor_id }, true);
 
   // Keep the token short-lived: cover the remaining window plus reconnect room.
   const msRemaining = Math.max(
@@ -148,9 +204,53 @@ export async function POST(request) {
   );
   const ttlSeconds = Math.min(Math.ceil(msRemaining / 1000), MAX_TOKEN_TTL_SECONDS);
 
-  // --- 8. Issue a room-scoped token ----------------------------------------
   try {
-    const token = new AccessToken(apiKey, apiSecret, { identity, ttl: ttlSeconds });
+    // --- 8a. Waiting room (patients only, until the doctor admits them) ----
+    // A patient who has not been admitted never receives a token for the active
+    // room, so hiding the video UI is not what keeps them out — the server does.
+    if (isPatient) {
+      const { data: admission, error: admissionError } = await supabase
+        .from("consultation_admissions")
+        .select("appointment_id")
+        .eq("appointment_id", appointment.id)
+        .eq("patient_id", user.id)
+        .maybeSingle();
+
+      if (admissionError) {
+        return fail(500, "admission_lookup_failed", "Could not verify your consultation access.");
+      }
+
+      if (!admission) {
+        const waitingToken = new AccessToken(apiKey, apiSecret, {
+          identity,
+          name: displayName,
+          ttl: ttlSeconds,
+        });
+        waitingToken.addGrant({
+          roomJoin: true,
+          room: waitingRoomName,
+          canPublish: false,
+          canSubscribe: false,
+          canPublishData: false,
+        });
+
+        return NextResponse.json({
+          status: "waiting",
+          role: "patient",
+          token: await waitingToken.toJwt(),
+          url: livekitUrl,
+          room: waitingRoomName,
+          doctorName,
+        });
+      }
+    }
+
+    // --- 8b. Active consultation room -------------------------------------
+    const token = new AccessToken(apiKey, apiSecret, {
+      identity,
+      name: displayName,
+      ttl: ttlSeconds,
+    });
     token.addGrant({
       roomJoin: true,
       room: roomName,
@@ -162,7 +262,14 @@ export async function POST(request) {
     const jwt = await token.toJwt();
 
     // Minimum connection data for the authorized caller only.
-    return NextResponse.json({ token: jwt, url: livekitUrl, room: roomName });
+    return NextResponse.json({
+      status: "admitted",
+      role: isAssignedDoctor ? "doctor" : "patient",
+      token: jwt,
+      url: livekitUrl,
+      room: roomName,
+      doctorName,
+    });
   } catch {
     return fail(500, "token_generation_failed", "Could not create a consultation token.");
   }

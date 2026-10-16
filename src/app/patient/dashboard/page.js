@@ -7,6 +7,8 @@ import { createClient } from "../../../lib/supabase/client";
 import { Button } from "../../../components/ui/Button";
 import { Badge, Card } from "../../../components/ui/Card";
 import { JoinConsultationButton } from "../../../components/consultation/JoinConsultationButton";
+import PatientConsultationAlerts from "../../../components/consultation/PatientConsultationAlerts";
+import { JOIN_GRACE_AFTER_MS } from "../../../lib/consultation";
 import {
   getPatientAppointments,
   cancelAppointmentAction,
@@ -117,19 +119,28 @@ export default function PatientDashboardShell() {
     setCancellingId(null);
   };
 
-  // Split appointments into Upcoming and Past
-  const now = new Date();
-  const upcomingAppointments = appointments.filter((a) => {
-    const isFuture = new Date(a.starts_at) > now;
-    const isActiveStatus = ["requested", "confirmed"].includes(a.status);
-    return isFuture && isActiveStatus;
-  });
+  // Split appointments into Upcoming/Active and Past.
+  //
+  // A confirmed appointment must stay in the active list for its whole
+  // consultation window (until ends_at + grace). The previous split used
+  // "starts_at is in the future", which moved an appointment out of the active
+  // list the moment its start time arrived — hiding the patient's Join action
+  // exactly when the consultation was due to begin.
+  const now = Date.now();
 
-  const pastAppointments = appointments.filter((a) => {
-    const isFuture = new Date(a.starts_at) > now;
-    const isActiveStatus = ["requested", "confirmed"].includes(a.status);
-    return !isFuture || !isActiveStatus;
-  });
+  const isActiveAppointment = (a) => {
+    if (!["requested", "confirmed"].includes(a.status)) return false;
+    const endsAt = new Date(a.ends_at).getTime();
+    if (Number.isNaN(endsAt)) {
+      // Fall back to the original behaviour for rows without an end time.
+      return new Date(a.starts_at).getTime() > now;
+    }
+    return endsAt + JOIN_GRACE_AFTER_MS > now;
+  };
+
+  const upcomingAppointments = appointments.filter(isActiveAppointment);
+
+  const pastAppointments = appointments.filter((a) => !isActiveAppointment(a));
 
   if (loading) {
     return (
@@ -209,6 +220,9 @@ export default function PatientDashboardShell() {
             </Link>
           </div>
         </div>
+
+        {/* Consultation reminders + real-time doctor arrival alerts */}
+        <PatientConsultationAlerts appointments={appointments} userId={user?.id} />
 
         {/* Feedback Alerts */}
         {actionSuccess && (

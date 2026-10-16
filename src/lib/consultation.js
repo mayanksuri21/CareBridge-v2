@@ -1,14 +1,29 @@
 /**
- * Shared consultation-window helpers for the CareBridge LiveKit video flow.
+ * Shared consultation helpers for the CareBridge LiveKit video flow.
  *
  * These values mirror the server-side window enforced by
- * `src/app/api/consultation/token/route.js`. The API remains the single source
- * of truth for authorization; the client uses this only to decide whether to
- * show the "Join Consultation" affordance.
+ * `src/app/api/consultation/token/route.js` and by the
+ * `public.admit_consultation_patient()` SQL function. The server remains the
+ * single source of truth for authorization; the client uses this only to decide
+ * whether to show the "Join Consultation" affordance.
  */
 
 export const JOIN_GRACE_BEFORE_MS = 15 * 60 * 1000; // 15 minutes before starts_at
 export const JOIN_GRACE_AFTER_MS = 30 * 60 * 1000; // 30 minutes after ends_at
+
+/** Active consultation room. Opaque, derived from the appointment id only. */
+export function getConsultationRoomName(appointmentId) {
+  return `consultation_${appointmentId}`;
+}
+
+/**
+ * Waiting room. A patient who has not been admitted by the doctor only ever
+ * receives a token scoped to this room, so they cannot see or hear the active
+ * consultation.
+ */
+export function getWaitingRoomName(appointmentId) {
+  return `consultation_waiting_${appointmentId}`;
+}
 
 /**
  * Determines whether a consultation is currently joinable.
@@ -42,4 +57,33 @@ export function getConsultationState(appointment, now = Date.now()) {
   }
 
   return { canJoin: true, reason: null };
+}
+
+/** True when the appointment is inside the consultation time window. */
+export function isWithinConsultationWindow(appointment, now = Date.now()) {
+  return getConsultationState(appointment, now).canJoin;
+}
+
+function formatTimeIST(iso) {
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatDateIST(iso) {
+  return new Date(iso).toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** "Mon, 3 Nov 2026 at 09:30 am IST" */
+export function formatConsultationSlotIST(iso) {
+  return `${formatDateIST(iso)} at ${formatTimeIST(iso)} IST`;
 }
