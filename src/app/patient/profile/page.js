@@ -10,7 +10,6 @@ import {
   getPatientProfile,
   updatePatientProfile,
 } from "../../../lib/patientActions";
-import { createClient } from "../../../lib/supabase/client";
 import {
   HeartPulse,
   User,
@@ -55,7 +54,7 @@ function calculateAge(dateOfBirth) {
 
 export default function PatientProfilePage() {
   const router = useRouter();
-  const { refreshProfile } = useAuth();
+  const { user, loading: authLoading, refreshProfile } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -88,33 +87,24 @@ export default function PatientProfilePage() {
 
         if (!res.success) {
           if (!active) return;
-          const supabase = createClient();
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session?.user) {
+          if (!user) {
             router.push("/patient/login");
             return;
           }
 
           // Client-side fallback if SSR cookie sync has not propagated
-          const { data: prof } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", session.user.id)
-            .maybeSingle();
-
-          if (!active) return;
-          const meta = session.user.user_metadata || {};
-          setEmail(prof?.email || session.user.email || "");
+          const meta = user.user_metadata || {};
+          setEmail(user.email || "");
           setAvatarUrl(meta.avatar_url || meta.picture || null);
-          setNeedsInit(!prof);
+          setNeedsInit(true);
           setForm({
-            full_name: prof?.full_name || meta.full_name || meta.name || "",
-            phone: prof?.phone || "",
-            date_of_birth: prof?.date_of_birth || "",
-            gender: prof?.gender || "",
-            preferred_language: prof?.preferred_language || "en",
-            state: prof?.state || "",
-            district: prof?.district || "",
+            full_name: meta.full_name || meta.name || "",
+            phone: "",
+            date_of_birth: "",
+            gender: "",
+            preferred_language: "en",
+            state: "",
+            district: "",
           });
           setLoading(false);
           return;
@@ -142,22 +132,14 @@ export default function PatientProfilePage() {
       }
     }
 
-    loadProfile();
-
-    const supabase = createClient();
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_OUT" && active) {
-        router.push("/patient/login");
-      }
-    });
+    if (!authLoading) {
+      loadProfile();
+    }
 
     return () => {
       active = false;
-      subscription?.unsubscribe();
     };
-  }, [router]);
+  }, [user, authLoading, router]);
 
   const handleChange = (field) => (e) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));

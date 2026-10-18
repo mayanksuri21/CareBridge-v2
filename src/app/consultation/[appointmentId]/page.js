@@ -30,9 +30,9 @@ import {
   Users,
   Video,
   VideoOff,
+  Pill,
 } from "lucide-react";
 
-// Human-readable messages for the secure token API's error codes.
 const ERROR_MESSAGES = {
   unauthenticated: "Please sign in to join this consultation.",
   not_a_participant: "You are not a participant of this consultation.",
@@ -59,22 +59,21 @@ const PRESENCE_POLL_MS = 5000;
 export default function ConsultationPage() {
   const params = useParams();
   const router = useRouter();
-  const appointmentId = Array.isArray(params?.appointmentId)
-    ? params.appointmentId[0]
-    : params?.appointmentId;
 
-  const [phase, setPhase] = useState("loading"); // loading | waiting | room | error | ended
+  const rawId = params?.appointmentId || params?.id;
+  const appointmentId = Array.isArray(rawId) ? rawId[0] : rawId;
+
+  const [phase, setPhase] = useState("loading");
   const [error, setError] = useState(null);
-  const [session, setSession] = useState(null); // { status, role, token, url, room, doctorName }
+  const [session, setSession] = useState(null);
   const [doctorName, setDoctorName] = useState(null);
   const [doctorPresent, setDoctorPresent] = useState(false);
+  const [patientDetails, setPatientDetails] = useState(null);
   const intentionalLeaveRef = useRef(false);
   const upgradingRef = useRef(false);
 
-  // Request a token from the secure server API using ONLY the appointment id.
-  // The API authorizes the caller and decides whether the patient gets the
-  // waiting-room token or the active-room token; the client never decides.
   const requestToken = useCallback(async () => {
+    if (!appointmentId) return null;
     try {
       const res = await fetch("/api/consultation/token", {
         method: "POST",
@@ -94,12 +93,29 @@ export default function ConsultationPage() {
 
       setSession(payload);
       if (payload.doctorName) setDoctorName(payload.doctorName);
-      setPhase(payload.status === "waiting" ? "waiting" : "room");
+      const newPhase = payload.status === "waiting" ? "waiting" : "room";
+      setPhase(newPhase);
       return payload;
     } catch {
       setError({ code: "network_error", message: ERROR_MESSAGES.network_error });
       setPhase("error");
       return null;
+    }
+  }, [appointmentId]);
+
+  const fetchPatientDetails = useCallback(async () => {
+    if (!appointmentId) return;
+    try {
+      const res = await fetch(
+        `/api/consultation/patient-details?appointmentId=${encodeURIComponent(appointmentId)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      // Yahan data.patient || data kar do taaki exact match ho jaye
+      setPatientDetails(data?.patient || data);
+    } catch (err) {
+      console.error("[Patient Details] Fetch error:", err);
     }
   }, [appointmentId]);
 
@@ -112,14 +128,16 @@ export default function ConsultationPage() {
     requestToken();
   }, [appointmentId, requestToken]);
 
-  // While waiting, poll the server for admission / doctor arrival. Admission is
-  // granted only by the doctor and enforced server-side, so this poll can only
-  // ever observe state — it can never let the patient in by itself.
+  useEffect(() => {
+    if (appointmentId) {
+      fetchPatientDetails();
+    }
+  }, [appointmentId, fetchPatientDetails]);
+
   useEffect(() => {
     if (phase !== "waiting" || !appointmentId) return undefined;
 
     let stopped = false;
-
     const check = async () => {
       try {
         const res = await fetch(
@@ -133,32 +151,32 @@ export default function ConsultationPage() {
         if (state?.doctorName) setDoctorName(state.doctorName);
         setDoctorPresent(Boolean(state?.doctorPresent));
 
-        if ((state?.admitted || state?.doctorPresent) && !upgradingRef.current) {
+        // Jab doctor admit kare:
+        if (state?.admitted && !upgradingRef.current) {
           upgradingRef.current = true;
           const upgraded = await requestToken();
-          // If the server still reports "waiting" (e.g. a race), allow retrying.
-          if (!upgraded || upgraded.status === "waiting") {
+
+          if (upgraded && upgraded.status !== "waiting") {
+            intentionalLeaveRef.current = false;
+            setPhase("room");
+            router.refresh();
+          } else {
             upgradingRef.current = false;
           }
-          if (upgraded?.status === "admitted" && upgraded?.role === "patient") {
-            intentionalLeaveRef.current = false;
-          }
         }
-      } catch {
-        // Transient network errors are ignored; the next tick retries.
+      } catch (err) {
+        console.error("[Waiting Room Polling Error]:", err);
       }
     };
 
     check();
-    const timer = setInterval(check, PRESENCE_POLL_MS);
+    const timer = setInterval(check, 2000); // 2 second interval
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, [phase, appointmentId, requestToken]);
+  }, [phase, appointmentId, requestToken, router]);
 
-  // Explicit Leave / End Call. This only disconnects the local room — it never
-  // cancels, approves, or otherwise mutates the appointment.
   const handleLeave = useCallback(() => {
     intentionalLeaveRef.current = true;
     router.back();
@@ -192,18 +210,13 @@ export default function ConsultationPage() {
       <Card className="max-w-md mx-auto mt-10 p-8 space-y-4 text-center">
         <PhoneOff className="w-9 h-9 text-slate-400 mx-auto" />
         <h1 className="text-base font-black text-slate-900">Consultation ended</h1>
-        <p className="text-xs text-slate-600">
-          You have left the call. Your appointment status has not been changed.
-        </p>
+        <p className="text-xs text-slate-600">You have left the call.</p>
         <Button variant="primary" size="sm" className="text-xs font-bold" onClick={() => router.back()}>
           Back to Dashboard
         </Button>
       </Card>
     );
   } else if (phase === "waiting") {
-    // Connecting to the waiting room is what tells the doctor that this patient
-    // is present. This token cannot publish or subscribe, and it is scoped to
-    // the waiting room only — the active consultation room is not reachable.
     content = (
       <>
         <LiveKitRoom
@@ -276,15 +289,49 @@ export default function ConsultationPage() {
         </div>
       </header>
 
+      {/* Patient Details Bar */}
+      {phase === "room" && (
+        <div className="bg-white border-b border-slate-200">
+          <div className="max-w-6xl mx-auto px-4 py-3">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <span className="font-semibold text-slate-400 uppercase tracking-wide">Patient Details</span>
+              <div className="h-4 w-px bg-slate-200" />
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Name:</span>
+                  <span className="font-semibold text-slate-700">
+                    {patientDetails?.full_name || patientDetails?.name || "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Age:</span>
+                  <span className="font-semibold text-slate-700">
+                    {patientDetails?.age ? `${patientDetails.age} yrs` : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Gender:</span>
+                  <span className="font-semibold text-slate-700 capitalize">
+                    {patientDetails?.gender || "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Phone:</span>
+                  <span className="font-semibold text-slate-700">
+                    {patientDetails?.phone || "—"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{content}</main>
     </div>
   );
 }
 
-/**
- * Patient waiting screen. The patient is present in the waiting room but has no
- * access to the active consultation until the doctor admits them server-side.
- */
 function WaitingRoom({ doctorName, doctorPresent, onLeave }) {
   const doctorLabel = doctorName || "your doctor";
 
@@ -310,9 +357,8 @@ function WaitingRoom({ doctorName, doctorPresent, onLeave }) {
         <div className="flex items-center justify-center">
           <Badge variant={doctorPresent ? "mint" : "slate"}>
             <span
-              className={`inline-block w-2 h-2 rounded-full ${
-                doctorPresent ? "bg-brand-emerald" : "bg-amber-500"
-              }`}
+              className={`inline-block w-2 h-2 rounded-full ${doctorPresent ? "bg-brand-emerald" : "bg-amber-500"
+                }`}
             />
             {doctorPresent ? `${doctorLabel} is in the consultation room` : "Connecting to the doctor…"}
           </Badge>
@@ -328,24 +374,18 @@ function WaitingRoom({ doctorName, doctorPresent, onLeave }) {
           Leave Waiting Room
         </Button>
       </Card>
-
-      <p className="text-center text-[11px] text-slate-400">
-        Waiting here does not change your appointment. The doctor must admit you before the consultation starts.
-      </p>
     </div>
   );
 }
 
-/**
- * Doctor-side admission control. Presence of the waiting patient is read from
- * the server (LiveKit room state), and admission is enforced server-side.
- */
-function AdmitPanel({ appointmentId }) {
+function AdmitPanel({ appointmentId, patientDetails }) {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
+  const patientName = state?.patientName || patientDetails?.full_name || patientDetails?.name || "Patient";
 
   const refresh = useCallback(async () => {
+    if (!appointmentId) return;
     try {
       const res = await fetch(
         `/api/consultation/state?appointmentId=${encodeURIComponent(appointmentId)}`,
@@ -354,9 +394,7 @@ function AdmitPanel({ appointmentId }) {
       if (!res.ok) return;
       const data = await res.json();
       setState(data);
-    } catch {
-      // Ignore transient failures; the next tick retries.
-    }
+    } catch { }
   }, [appointmentId]);
 
   useEffect(() => {
@@ -369,13 +407,14 @@ function AdmitPanel({ appointmentId }) {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/consultation/admit", {
+      const res = fetch("/api/consultation/admit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appointmentId }),
       });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      const response = await res;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
         setMessage({ tone: "error", text: payload?.message || "Could not admit the patient." });
         return;
       }
@@ -390,7 +429,6 @@ function AdmitPanel({ appointmentId }) {
 
   const patientWaiting = Boolean(state?.patientWaiting);
   const patientAdmitted = Boolean(state?.patientAdmitted);
-  const patientName = state?.patientName || "Your patient";
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
@@ -401,9 +439,8 @@ function AdmitPanel({ appointmentId }) {
         </div>
         <Badge variant={patientWaiting ? "mint" : "slate"}>
           <span
-            className={`inline-block w-2 h-2 rounded-full ${
-              patientWaiting ? "bg-brand-emerald" : "bg-slate-300"
-            }`}
+            className={`inline-block w-2 h-2 rounded-full ${patientWaiting ? "bg-brand-emerald" : "bg-slate-300"
+              }`}
           />
           {patientWaiting ? `${patientName} is waiting` : "No one is waiting"}
         </Badge>
@@ -427,11 +464,7 @@ function AdmitPanel({ appointmentId }) {
             onClick={admit}
             disabled={busy}
           >
-            {busy ? (
-              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-            ) : (
-              <UserPlus className="w-3.5 h-3.5 mr-1.5" />
-            )}
+            {busy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5 mr-1.5" />}
             Admit patient
           </Button>
         </div>
@@ -444,11 +477,7 @@ function AdmitPanel({ appointmentId }) {
       )}
 
       {message && (
-        <p
-          className={`text-[11px] font-semibold ${
-            message.tone === "error" ? "text-rose-600" : "text-emerald-700"
-          }`}
-        >
+        <p className={`text-[11px] font-semibold ${message.tone === "error" ? "text-rose-600" : "text-emerald-700"}`}>
           {message.text}
         </p>
       )}
@@ -456,12 +485,60 @@ function AdmitPanel({ appointmentId }) {
   );
 }
 
-/**
- * The in-room stage: participant video, mic/camera toggles, connection state,
- * the participant list, and the explicit Leave control.
- * Must be rendered inside <LiveKitRoom>.
- */
-function ConsultationStage({ role, appointmentId, onLeave }) {
+function DraggablePiP({ children, className }) {
+  const [position, setPosition] = useState({ x: 20, y: 20 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef(null);
+  const startPosRef = useRef({ x: 0, y: 0 });
+
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+    startPosRef.current = {
+      x: e.clientX - position.x,
+      y: e.clientY - position.y,
+    };
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging) return;
+      setPosition({
+        x: e.clientX - startPosRef.current.x,
+        y: e.clientY - startPosRef.current.y,
+      });
+    };
+    const handleMouseUp = () => setIsDragging(false);
+
+    if (isDragging) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
+
+  return (
+    <div
+      ref={dragRef}
+      className={className}
+      style={{
+        position: "absolute",
+        left: `${position.x}px`,
+        top: `${position.y}px`,
+        cursor: isDragging ? "grabbing" : "grab",
+        zIndex: 10,
+      }}
+      onMouseDown={handleMouseDown}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ConsultationStage({ role, appointmentId, onLeave, patientDetails }) {
   const room = useRoomContext();
   const connectionState = useConnectionState();
   const participants = useParticipants();
@@ -486,7 +563,7 @@ function ConsultationStage({ role, appointmentId, onLeave }) {
     try {
       await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
     } catch {
-      setControlError("Microphone is unavailable. Check your browser permissions.");
+      setControlError("Microphone is unavailable. Check permissions.");
     }
   };
 
@@ -495,31 +572,34 @@ function ConsultationStage({ role, appointmentId, onLeave }) {
     try {
       await localParticipant.setCameraEnabled(!isCameraEnabled);
     } catch {
-      setControlError("Camera is unavailable. Check your browser permissions.");
+      setControlError("Camera is unavailable. Check permissions.");
     }
   };
 
   const handleLeaveClick = async () => {
     try {
       await room.disconnect();
-    } catch {
-      // Ignore disconnect errors; LiveKitRoom also cleans up on unmount.
-    }
+    } catch { }
     onLeave();
   };
 
   const isConnected = connectionState === ConnectionState.Connected;
-  const gridCols = tracks.length > 1 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1";
+  const localTrack = tracks.find((track) => track.participant.isLocal);
+  const remoteTracks = tracks.filter((track) => !track.participant.isLocal);
+
+  const mainTrack = remoteTracks.length > 0 ? remoteTracks[0] : localTrack;
+  const hasMainVideo = Boolean(mainTrack?.publication);
+  const mainDisplayName =
+    mainTrack?.participant.name || (mainTrack?.participant.isLocal ? "You" : "Participant");
+  const isMainLocal = mainTrack?.participant.isLocal || false;
 
   return (
     <div className="space-y-4">
-      {/* Connection state */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge variant={isConnected ? "mint" : "slate"}>
           <span
-            className={`inline-block w-2 h-2 rounded-full ${
-              isConnected ? "bg-brand-emerald" : "bg-amber-500"
-            }`}
+            className={`inline-block w-2 h-2 rounded-full ${isConnected ? "bg-brand-emerald" : "bg-amber-500"
+              }`}
           />
           {connectionLabel}
         </Badge>
@@ -533,40 +613,82 @@ function ConsultationStage({ role, appointmentId, onLeave }) {
         </div>
       )}
 
-      {/* Doctor-controlled waiting room */}
-      {role === "doctor" && <AdmitPanel appointmentId={appointmentId} />}
+      {role === "doctor" && (
+        <AdmitPanel appointmentId={appointmentId} patientDetails={patientDetails} />
+      )}
+      <div className="flex gap-4">
+        <div className="flex-1 space-y-4">
+          <div className="relative aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
+            {hasMainVideo ? (
+              <VideoTrack trackRef={mainTrack} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400">
+                <VideoOff className="w-12 h-12" />
+                <span className="text-sm font-semibold">{mainDisplayName}</span>
+              </div>
+            )}
+            <span className="absolute bottom-3 left-3 rounded-full bg-black/55 px-3 py-1.5 text-xs font-bold text-white">
+              {mainDisplayName}
+              {isMainLocal ? " (You)" : ""}
+            </span>
 
-      {/* Participant video — display names come from the server-issued token */}
-      <div className={`grid ${gridCols} gap-3`}>
-        {tracks.map((track) => {
-          const key = `${track.participant.identity}-${track.source}`;
-          const isLocal = track.participant.isLocal;
-          const hasVideo = Boolean(track.publication);
-          const displayName =
-            track.participant.name || (isLocal ? "You" : "Participant");
-          return (
-            <div
-              key={key}
-              className="relative aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-slate-800"
+            {localTrack && !isMainLocal && (
+              <DraggablePiP className="w-[180px] h-[120px] rounded-xl overflow-hidden bg-slate-900 border-2 border-white shadow-lg">
+                {localTrack.publication ? (
+                  <VideoTrack trackRef={localTrack} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-slate-400">
+                    <VideoOff className="w-5 h-5" />
+                    <span className="text-[10px] font-semibold">You</span>
+                  </div>
+                )}
+                <span className="absolute bottom-1 left-1 rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-bold text-white">
+                  You
+                </span>
+              </DraggablePiP>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <Button
+              variant={isMicrophoneEnabled ? "mint" : "outline"}
+              size="md"
+              onClick={toggleMic}
+              aria-pressed={isMicrophoneEnabled}
+              className="text-xs font-bold"
             >
-              {hasVideo ? (
-                <VideoTrack trackRef={track} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400">
-                  <VideoOff className="w-7 h-7" />
-                  <span className="text-[11px] font-semibold">{displayName}</span>
-                </div>
-              )}
-              <span className="absolute bottom-2 left-2 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-bold text-white">
-                {displayName}
-                {isLocal ? " (You)" : ""}
-              </span>
-            </div>
-          );
-        })}
+              {isMicrophoneEnabled ? <Mic className="w-4 h-4 mr-1.5" /> : <MicOff className="w-4 h-4 mr-1.5" />}
+              {isMicrophoneEnabled ? "Mute" : "Unmute"}
+            </Button>
+
+            <Button
+              variant={isCameraEnabled ? "mint" : "outline"}
+              size="md"
+              onClick={toggleCamera}
+              aria-pressed={isCameraEnabled}
+              className="text-xs font-bold"
+            >
+              {isCameraEnabled ? <Video className="w-4 h-4 mr-1.5" /> : <VideoOff className="w-4 h-4 mr-1.5" />}
+              {isCameraEnabled ? "Stop Camera" : "Start Camera"}
+            </Button>
+
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleLeaveClick}
+              className="text-xs font-bold bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
+            >
+              <PhoneOff className="w-4 h-4 mr-1.5" />
+              Leave Call
+            </Button>
+          </div>
+        </div>
+
+        <div className="w-[360px] flex-shrink-0 space-y-4">
+          <ConsultationPanel role={role} appointmentId={appointmentId} />
+        </div>
       </div>
 
-      {/* Participant list */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-brand-blue" />
@@ -596,44 +718,406 @@ function ConsultationStage({ role, appointmentId, onLeave }) {
         </ul>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-        <Button
-          variant={isMicrophoneEnabled ? "mint" : "outline"}
-          size="md"
-          onClick={toggleMic}
-          aria-pressed={isMicrophoneEnabled}
-          className="text-xs font-bold"
-        >
-          {isMicrophoneEnabled ? <Mic className="w-4 h-4 mr-1.5" /> : <MicOff className="w-4 h-4 mr-1.5" />}
-          {isMicrophoneEnabled ? "Mute" : "Unmute"}
-        </Button>
-
-        <Button
-          variant={isCameraEnabled ? "mint" : "outline"}
-          size="md"
-          onClick={toggleCamera}
-          aria-pressed={isCameraEnabled}
-          className="text-xs font-bold"
-        >
-          {isCameraEnabled ? <Video className="w-4 h-4 mr-1.5" /> : <VideoOff className="w-4 h-4 mr-1.5" />}
-          {isCameraEnabled ? "Stop Camera" : "Start Camera"}
-        </Button>
-
-        <Button
-          variant="primary"
-          size="md"
-          onClick={handleLeaveClick}
-          className="text-xs font-bold bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
-        >
-          <PhoneOff className="w-4 h-4 mr-1.5" />
-          Leave Call
-        </Button>
-      </div>
-
       <p className="text-center text-[11px] text-slate-400">
         Leaving the call does not cancel or change your appointment.
       </p>
+    </div>
+  );
+}
+
+function ConsultationPanel({ role, appointmentId }) {
+  const isDoctor = role === "doctor";
+  const [medicines, setMedicines] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    strength: "",
+    dose: "",
+    frequency: "",
+    duration: "",
+    instructions: "",
+  });
+  const [clinicalNotes, setClinicalNotes] = useState("");
+  const [prescriptionStatus, setPrescriptionStatus] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState(null);
+
+  const handleInputChange = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const addMedicine = () => {
+    if (!formData.name.trim()) return;
+
+    if (editingId) {
+      setMedicines(
+        medicines.map((med) => (med.id === editingId ? { ...formData, id: editingId } : med))
+      );
+      setEditingId(null);
+    } else {
+      setMedicines([...medicines, { ...formData, id: Date.now() }]);
+    }
+
+    setFormData({
+      name: "",
+      strength: "",
+      dose: "",
+      frequency: "",
+      duration: "",
+      instructions: "",
+    });
+  };
+
+  const editMedicine = (medicine) => {
+    setFormData({
+      name: medicine.name,
+      strength: medicine.strength,
+      dose: medicine.dose,
+      frequency: medicine.frequency,
+      duration: medicine.duration,
+      instructions: medicine.instructions,
+    });
+    setEditingId(medicine.id);
+  };
+
+  const removeMedicine = (id) => {
+    setMedicines(medicines.filter((med) => med.id !== id));
+    if (editingId === id) {
+      cancelEdit();
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setFormData({
+      name: "",
+      strength: "",
+      dose: "",
+      frequency: "",
+      duration: "",
+      instructions: "",
+    });
+  };
+
+  // Poll/Load prescription for both Doctor and Patient so updates sync in real-time
+  const loadPrescription = useCallback(async () => {
+    if (!appointmentId) return;
+    try {
+      const res = await fetch(
+        `/api/consultation/prescription?appointmentId=${encodeURIComponent(appointmentId)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data.prescription) {
+        setPrescriptionStatus(data.prescription.status);
+        if (!isDoctor) {
+          // Sync doctor's notes and medicines to patient side
+          setClinicalNotes(data.prescription.clinicalNotes || "");
+          setMedicines(data.prescription.medicines || []);
+        } else if (!medicines.length) {
+          // Initial load for doctor
+          setClinicalNotes(data.prescription.clinicalNotes || "");
+          setMedicines(data.prescription.medicines || []);
+        }
+      }
+    } catch { }
+  }, [appointmentId, isDoctor, medicines.length]);
+
+  useEffect(() => {
+    loadPrescription();
+    // Patient live poll: updates every 4 seconds when doctor hits Save Draft
+    if (!isDoctor) {
+      const timer = setInterval(loadPrescription, 4000);
+      return () => clearInterval(timer);
+    }
+  }, [loadPrescription, isDoctor]);
+
+  const savePrescription = async (status) => {
+    if (!appointmentId) return;
+
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      const res = await fetch("/api/consultation/prescription", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointmentId,
+          status,
+          clinicalNotes,
+          medicines: medicines.map((med) => ({
+            name: med.name,
+            strength: med.strength,
+            dose: med.dose,
+            frequency: med.frequency,
+            duration: med.duration,
+            instructions: med.instructions,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveMessage({ tone: "error", text: data?.message || "Failed to save prescription." });
+        return;
+      }
+
+      setPrescriptionStatus(status);
+      setSaveMessage({ tone: "success", text: status === "finalized" ? "Prescription Finalized & Sent!" : "Draft Saved & Visible to Patient!" });
+      setTimeout(() => setSaveMessage(null), 3500);
+    } catch {
+      setSaveMessage({ tone: "error", text: "Failed to save prescription." });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Previous Records */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+        <h3 className="text-xs font-black text-slate-900 uppercase tracking-wide">Previous Records</h3>
+        <p className="text-xs text-slate-400 italic">No previous records yet</p>
+      </div>
+
+      {/* Clinical Notes */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+        <h3 className="text-xs font-black text-slate-900 uppercase tracking-wide">Clinical Notes</h3>
+        {isDoctor ? (
+          <textarea
+            value={clinicalNotes}
+            onChange={(e) => setClinicalNotes(e.target.value)}
+            placeholder="Write clinical notes, advice or tests to order…"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20 resize-none"
+            rows={4}
+            disabled={prescriptionStatus === "finalized"}
+          />
+        ) : (
+          <p className="text-xs text-slate-600 whitespace-pre-wrap">
+            {clinicalNotes || <span className="text-slate-400 italic">Clinical notes from the doctor will appear here.</span>}
+          </p>
+        )}
+      </div>
+
+      {/* Prescription */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black text-slate-900 uppercase tracking-wide">Prescription</h3>
+          {prescriptionStatus && (
+            <Badge variant={prescriptionStatus === "finalized" ? "mint" : "slate"}>
+              {prescriptionStatus === "finalized" ? "Finalized" : "Draft"}
+            </Badge>
+          )}
+        </div>
+
+        {saveMessage && (
+          <div
+            className={`flex items-center gap-2 rounded-lg p-2 text-[10px] font-semibold ${saveMessage.tone === "error"
+              ? "bg-rose-50 border border-rose-200 text-rose-700"
+              : "bg-emerald-50 border border-emerald-200 text-emerald-700"
+              }`}
+          >
+            {saveMessage.text}
+          </div>
+        )}
+
+        {isDoctor && (
+          <>
+            <div className={`rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 ${prescriptionStatus === "finalized" ? "opacity-50 pointer-events-none" : ""}`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-semibold text-slate-500">
+                  {editingId ? "Edit Medicine" : "Add New Medicine"}
+                </span>
+                {editingId && (
+                  <button
+                    onClick={cancelEdit}
+                    className="text-[10px] font-semibold text-slate-400 hover:text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                  Medicine Name
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => handleInputChange("name", e.target.value)}
+                  placeholder="e.g. Paracetamol"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                    Strength / Form
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.strength}
+                    onChange={(e) => handleInputChange("strength", e.target.value)}
+                    placeholder="e.g. 500mg Tablet"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                    Dose
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.dose}
+                    onChange={(e) => handleInputChange("dose", e.target.value)}
+                    placeholder="e.g. 1 tablet"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                    Frequency
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.frequency}
+                    onChange={(e) => handleInputChange("frequency", e.target.value)}
+                    placeholder="e.g. Twice daily"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                    Duration
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.duration}
+                    onChange={(e) => handleInputChange("duration", e.target.value)}
+                    placeholder="e.g. 5 days"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                  Instructions
+                </label>
+                <input
+                  type="text"
+                  value={formData.instructions}
+                  onChange={(e) => handleInputChange("instructions", e.target.value)}
+                  placeholder="e.g. After food"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                />
+              </div>
+
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full text-xs font-bold"
+                onClick={addMedicine}
+              >
+                {editingId ? "Update Medicine" : "+ Add Medicine"}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* Medicines List (Visible to Both Doctor and Patient) */}
+        {medicines.length > 0 ? (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+              <Pill className="w-3.5 h-3.5 text-brand-emerald" />
+              <span>Prescribed Medicines ({medicines.length})</span>
+            </div>
+            {medicines.map((medicine, idx) => (
+              <div
+                key={medicine.id || idx}
+                className="rounded-lg border border-slate-200 bg-white p-2.5 space-y-1.5 shadow-xs"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-slate-900 truncate">
+                      {medicine.name}
+                    </div>
+                    {(medicine.strength || medicine.dose) && (
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {medicine.strength} {medicine.strength && medicine.dose && "•"} {medicine.dose}
+                      </div>
+                    )}
+                    {(medicine.frequency || medicine.duration) && (
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {medicine.frequency} {medicine.frequency && medicine.duration && "•"} {medicine.duration}
+                      </div>
+                    )}
+                    {medicine.instructions && (
+                      <div className="text-[10px] text-slate-400 italic truncate">
+                        {medicine.instructions}
+                      </div>
+                    )}
+                  </div>
+
+                  {isDoctor && prescriptionStatus !== "finalized" && (
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => editMedicine(medicine)}
+                        className="w-6 h-6 flex items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-400 hover:text-brand-blue"
+                        title="Edit"
+                      >
+                        <span className="text-[10px]">✎</span>
+                      </button>
+                      <button
+                        onClick={() => removeMedicine(medicine.id)}
+                        className="w-6 h-6 flex items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-400 hover:text-rose-600"
+                        title="Remove"
+                      >
+                        <span className="text-xs">✕</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400 italic">
+            {isDoctor ? "No medicines added yet." : "Medicines prescribed during the call will appear here."}
+          </p>
+        )}
+
+        {isDoctor && (
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs font-bold"
+              onClick={() => savePrescription("draft")}
+              disabled={isSaving || prescriptionStatus === "finalized"}
+            >
+              {isSaving ? "Saving..." : "Save Draft"}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className="flex-1 text-xs font-bold"
+              onClick={() => savePrescription("finalized")}
+              disabled={isSaving || prescriptionStatus === "finalized"}
+            >
+              {isSaving ? "Finalizing..." : "Finalize"}
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

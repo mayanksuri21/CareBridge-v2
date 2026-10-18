@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import { createClient } from "../lib/supabase/client";
 
 const AuthContext = createContext({
@@ -20,9 +27,10 @@ export function AuthProvider({ children }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const supabase = createClient();
+  // Supabase client instance ko memoize kar diya taaki re-renders pe naya instance na bane
+  const supabase = useMemo(() => createClient(), []);
 
-  const loadUserData = async (currentUser) => {
+  const loadProfileData = useCallback(async (currentUser) => {
     if (!currentUser) {
       setUser(null);
       setProfile(null);
@@ -36,82 +44,64 @@ export function AuthProvider({ children }) {
 
     try {
       const [profRes, adminRes, docRes] = await Promise.allSettled([
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", currentUser.id)
-          .maybeSingle(),
-        supabase
-          .from("administrators")
-          .select("user_id")
-          .eq("user_id", currentUser.id)
-          .maybeSingle(),
-        supabase
-          .from("doctor_applications")
-          .select("*")
-          .eq("user_id", currentUser.id)
-          .maybeSingle(),
+        supabase.from("profiles").select("*").eq("id", currentUser.id).maybeSingle(),
+        supabase.from("administrators").select("user_id").eq("user_id", currentUser.id).maybeSingle(),
+        supabase.from("doctor_applications").select("*").eq("user_id", currentUser.id).maybeSingle(),
       ]);
 
-      if (profRes.status === "fulfilled" && profRes.value?.data) {
-        setProfile(profRes.value.data);
-      } else {
-        setProfile(null);
-      }
-
-      if (adminRes.status === "fulfilled" && adminRes.value?.data) {
-        setIsAdmin(true);
-      } else {
-        setIsAdmin(false);
-      }
-
-      if (docRes.status === "fulfilled" && docRes.value?.data) {
-        setDoctorApp(docRes.value.data);
-      } else {
-        setDoctorApp(null);
-      }
-    } catch {
-      // Supabase connection or table not set up yet
+      setProfile(profRes.status === "fulfilled" ? profRes.value?.data ?? null : null);
+      setIsAdmin(adminRes.status === "fulfilled" && Boolean(adminRes.value?.data));
+      setDoctorApp(docRes.status === "fulfilled" ? docRes.value?.data ?? null : null);
+    } catch (err) {
+      console.error("Auth fetch error:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase]);
 
   useEffect(() => {
-    let mounted = true;
+    let isCancelled = false;
 
-    // 1. Initial check
-    supabase.auth
-      .getSession()
-      .then(({ data: { session } }) => {
-        if (mounted) {
-          loadUserData(session?.user || null);
-        }
-      })
-      .catch(() => {
-        if (mounted) setLoading(false);
-      });
+    // 1. Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (isCancelled) return;
+      if (session?.user) {
+        loadProfileData(session.user);
+      } else {
+        setLoading(false);
+      }
+    });
 
-    // 2. Continuous auth subscription
+    // 2. Auth state change listener
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (mounted) {
-        await loadUserData(session?.user || null);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (isCancelled) return;
+
+      if (event === "SIGNED_OUT") {
+        setUser(null);
+        setProfile(null);
+        setDoctorApp(null);
+        setIsAdmin(false);
+        setLoading(false);
+      } else if (event === "SIGNED_IN" || event === "USER_UPDATED") {
+        if (session?.user) {
+          loadProfileData(session.user);
+        }
       }
     });
 
     return () => {
-      mounted = false;
+      isCancelled = true;
       subscription?.unsubscribe();
     };
-  }, []);
+  }, [loadProfileData, supabase]);
 
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
-    } catch {
-      // fallback
+    } catch (err) {
+      console.error("Sign out error:", err);
     }
     setUser(null);
     setProfile(null);
@@ -121,7 +111,7 @@ export function AuthProvider({ children }) {
 
   const refreshProfile = async () => {
     if (user) {
-      await loadUserData(user);
+      await loadProfileData(user);
     }
   };
 

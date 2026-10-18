@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createClient } from "../../../lib/supabase/client";
+import { useAuth } from "../../../context/AuthContext";
 import { Button } from "../../../components/ui/Button";
 import { Badge, Card } from "../../../components/ui/Card";
 import { JoinConsultationButton } from "../../../components/consultation/JoinConsultationButton";
@@ -33,11 +33,7 @@ import {
 
 export default function PatientDashboardShell() {
   const router = useRouter();
-  const supabase = createClient();
-
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const { user, profile, loading, signOut } = useAuth();
 
   // Appointments state
   const [appointments, setAppointments] = useState([]);
@@ -63,71 +59,13 @@ export default function PatientDashboardShell() {
   };
 
   useEffect(() => {
-    let mounted = true;
-
-    async function loadPatient(currentUser) {
-      if (!currentUser) {
-        if (mounted) router.push("/patient/login");
-        return;
-      }
-
-      if (mounted) setUser(currentUser);
-
-      try {
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", currentUser.id)
-          .maybeSingle();
-
-        if (mounted) {
-          setProfile(prof || null);
-          loadAppointments();
-        }
-      } catch (err) {
-        console.error("Dashboard init error:", err);
-      } finally {
-        if (mounted) setLoading(false);
-      }
+    if (!loading && user) {
+      loadAppointments();
     }
-
-    // 1. Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (mounted) {
-        if (session?.user) {
-          loadPatient(session.user);
-        } else {
-          // Allow onAuthStateChange to fire if session is restoring from storage
-          const timer = setTimeout(() => {
-            if (mounted && !user) {
-              router.push("/patient/login");
-            }
-          }, 600);
-          return () => clearTimeout(timer);
-        }
-      }
-    });
-
-    // 2. Listen to session changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!mounted) return;
-      if (session?.user) {
-        loadPatient(session.user);
-      } else if (event === "SIGNED_OUT") {
-        router.push("/patient/login");
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription?.unsubscribe();
-    };
-  }, []);
+  }, [loading, user]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     router.push("/");
   };
 
@@ -205,6 +143,13 @@ export default function PatientDashboardShell() {
               className="hidden sm:inline-flex text-xs font-bold text-brand-emerald hover:text-emerald-700 transition-colors"
             >
               Find Doctors
+            </Link>
+            <Link
+              href="/patient/prescriptions"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-brand-emerald transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 text-brand-emerald" />
+              Prescriptions
             </Link>
             <Link
               href="/patient/profile"

@@ -1,44 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { useRouter } from "next/navigation";
 import { Navbar } from "../../components/layout/Navbar";
 import { Footer } from "../../components/layout/Footer";
 import { DoctorDiscovery } from "../../components/sections/DoctorDiscovery";
-import { createClient } from "../../lib/supabase/client";
 import { useAuth } from "../../context/AuthContext";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 
 export default function FindDoctorsPage() {
   const router = useRouter();
-  const { user: authUser, loading: authLoading } = useAuth();
-  const [user, setUser] = useState(authUser);
-  const [loading, setLoading] = useState(authLoading);
-
-  useEffect(() => {
-    if (authUser) {
-      setUser(authUser);
-      setLoading(false);
-    } else if (!authLoading) {
-      setUser(null);
-      setLoading(false);
-    }
-  }, [authUser, authLoading]);
-
-  useEffect(() => {
-    const supabase = createClient();
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-      setLoading(false);
-    });
-
-    return () => {
-      subscription?.unsubscribe();
-    };
-  }, []);
+  const { user, loading } = useAuth();
 
   if (loading) {
     return (

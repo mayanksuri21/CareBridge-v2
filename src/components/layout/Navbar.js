@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useLanguage } from "../../context/LanguageContext";
 import { useAuth } from "../../context/AuthContext";
 import { Button } from "../ui/Button";
@@ -23,6 +23,7 @@ import {
 
 export function Navbar({ onAuthClick }) {
   const router = useRouter();
+  const pathname = usePathname(); // <-- 1. YAHAN DEFINE KARO
   const { language, setLanguage, t } = useLanguage();
   const { user, profile, isAdmin, doctorApp, signOut } = useAuth();
 
@@ -42,6 +43,15 @@ export function Navbar({ onAuthClick }) {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  // 👇👇 YAHAN ADD KARNA HAI (Iske theek neeche) 👇👇
+  useEffect(() => {
+    setDropdownOpen(false);
+    setMobileMenuOpen(false);
+  }, [pathname]);
+  // 👆👆 YAHAN TAK 👆👆
+
+
 
   const toggleLanguage = () => {
     setLanguage(language === "en" ? "hi" : "en");
