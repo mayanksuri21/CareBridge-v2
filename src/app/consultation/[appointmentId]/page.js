@@ -19,18 +19,15 @@ import { Badge, Card } from "../../../components/ui/Card";
 import { Button } from "../../../components/ui/Button";
 import {
   AlertTriangle,
-  Clock,
   Loader2,
   Mic,
   MicOff,
   PhoneOff,
   ShieldCheck,
-  UserCheck,
-  UserPlus,
-  Users,
   Video,
   VideoOff,
   Pill,
+  Users,
 } from "lucide-react";
 
 const ERROR_MESSAGES = {
@@ -54,8 +51,6 @@ const CONNECTION_LABELS = {
   [ConnectionState.Disconnected]: "Disconnected",
 };
 
-const PRESENCE_POLL_MS = 5000;
-
 export default function ConsultationPage() {
   const params = useParams();
   const router = useRouter();
@@ -66,11 +61,8 @@ export default function ConsultationPage() {
   const [phase, setPhase] = useState("loading");
   const [error, setError] = useState(null);
   const [session, setSession] = useState(null);
-  const [doctorName, setDoctorName] = useState(null);
-  const [doctorPresent, setDoctorPresent] = useState(false);
   const [patientDetails, setPatientDetails] = useState(null);
   const intentionalLeaveRef = useRef(false);
-  const upgradingRef = useRef(false);
 
   const requestToken = useCallback(async () => {
     if (!appointmentId) return null;
@@ -92,9 +84,7 @@ export default function ConsultationPage() {
       }
 
       setSession(payload);
-      if (payload.doctorName) setDoctorName(payload.doctorName);
-      const newPhase = payload.status === "waiting" ? "waiting" : "room";
-      setPhase(newPhase);
+      setPhase("room");
       return payload;
     } catch {
       setError({ code: "network_error", message: ERROR_MESSAGES.network_error });
@@ -134,49 +124,6 @@ export default function ConsultationPage() {
     }
   }, [appointmentId, fetchPatientDetails]);
 
-  useEffect(() => {
-    if (phase !== "waiting" || !appointmentId) return undefined;
-
-    let stopped = false;
-    const check = async () => {
-      try {
-        const res = await fetch(
-          `/api/consultation/state?appointmentId=${encodeURIComponent(appointmentId)}`,
-          { cache: "no-store" }
-        );
-        if (!res.ok) return;
-        const state = await res.json();
-        if (stopped) return;
-
-        if (state?.doctorName) setDoctorName(state.doctorName);
-        setDoctorPresent(Boolean(state?.doctorPresent));
-
-        // Jab doctor admit kare:
-        if (state?.admitted && !upgradingRef.current) {
-          upgradingRef.current = true;
-          const upgraded = await requestToken();
-
-          if (upgraded && upgraded.status !== "waiting") {
-            intentionalLeaveRef.current = false;
-            setPhase("room");
-            router.refresh();
-          } else {
-            upgradingRef.current = false;
-          }
-        }
-      } catch (err) {
-        console.error("[Waiting Room Polling Error]:", err);
-      }
-    };
-
-    check();
-    const timer = setInterval(check, 2000); // 2 second interval
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [phase, appointmentId, requestToken, router]);
-
   const handleLeave = useCallback(() => {
     intentionalLeaveRef.current = true;
     router.back();
@@ -215,24 +162,6 @@ export default function ConsultationPage() {
           Back to Dashboard
         </Button>
       </Card>
-    );
-  } else if (phase === "waiting") {
-    content = (
-      <>
-        <LiveKitRoom
-          token={session?.token}
-          serverUrl={session?.url}
-          connect
-          audio={false}
-          video={false}
-          className="hidden"
-          onError={() => {
-            setError({ code: "connection_failed", message: "The waiting room connection failed. Please try again." });
-            setPhase("error");
-          }}
-        />
-        <WaitingRoom doctorName={doctorName} doctorPresent={doctorPresent} onLeave={handleLeave} />
-      </>
     );
   } else {
     content = (
@@ -328,159 +257,6 @@ export default function ConsultationPage() {
       )}
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{content}</main>
-    </div>
-  );
-}
-
-function WaitingRoom({ doctorName, doctorPresent, onLeave }) {
-  const doctorLabel = doctorName || "your doctor";
-
-  return (
-    <div className="max-w-lg mx-auto mt-8 space-y-4">
-      <Card className="p-8 text-center space-y-4">
-        <div className="relative mx-auto w-20 h-20">
-          <div className="absolute inset-0 rounded-full bg-brand-blue/10 animate-pulse" />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Users className="w-8 h-8 text-brand-blue" />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <h1 className="text-base font-black text-slate-900">
-            Waiting for {doctorLabel} to let you in
-          </h1>
-          <p className="text-xs text-slate-500">
-            You are in the waiting room. Your camera and microphone stay off until the doctor admits you.
-          </p>
-        </div>
-
-        <div className="flex items-center justify-center">
-          <Badge variant={doctorPresent ? "mint" : "slate"}>
-            <span
-              className={`inline-block w-2 h-2 rounded-full ${doctorPresent ? "bg-brand-emerald" : "bg-amber-500"
-                }`}
-            />
-            {doctorPresent ? `${doctorLabel} is in the consultation room` : "Connecting to the doctor…"}
-          </Badge>
-        </div>
-
-        <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          This page updates automatically — no need to refresh.
-        </p>
-
-        <Button variant="outline" size="sm" className="text-xs font-bold" onClick={onLeave}>
-          <PhoneOff className="w-4 h-4 mr-1.5" />
-          Leave Waiting Room
-        </Button>
-      </Card>
-    </div>
-  );
-}
-
-function AdmitPanel({ appointmentId, patientDetails }) {
-  const [state, setState] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState(null);
-  const patientName = state?.patientName || patientDetails?.full_name || patientDetails?.name || "Patient";
-
-  const refresh = useCallback(async () => {
-    if (!appointmentId) return;
-    try {
-      const res = await fetch(
-        `/api/consultation/state?appointmentId=${encodeURIComponent(appointmentId)}`,
-        { cache: "no-store" }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      setState(data);
-    } catch { }
-  }, [appointmentId]);
-
-  useEffect(() => {
-    refresh();
-    const timer = setInterval(refresh, PRESENCE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
-
-  const admit = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const res = fetch("/api/consultation/admit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appointmentId }),
-      });
-      const response = await res;
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setMessage({ tone: "error", text: payload?.message || "Could not admit the patient." });
-        return;
-      }
-      setMessage({ tone: "success", text: "Patient admitted. They can now join the consultation." });
-      await refresh();
-    } catch {
-      setMessage({ tone: "error", text: ERROR_MESSAGES.network_error });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const patientWaiting = Boolean(state?.patientWaiting);
-  const patientAdmitted = Boolean(state?.patientAdmitted);
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <UserCheck className="w-4 h-4 text-brand-blue" />
-          <span className="text-xs font-black text-slate-800">Waiting room</span>
-        </div>
-        <Badge variant={patientWaiting ? "mint" : "slate"}>
-          <span
-            className={`inline-block w-2 h-2 rounded-full ${patientWaiting ? "bg-brand-emerald" : "bg-slate-300"
-              }`}
-          />
-          {patientWaiting ? `${patientName} is waiting` : "No one is waiting"}
-        </Badge>
-      </div>
-
-      {!patientWaiting && !patientAdmitted && (
-        <p className="text-[11px] text-slate-500">
-          The patient has not opened the waiting room yet. They will appear here automatically.
-        </p>
-      )}
-
-      {patientWaiting && !patientAdmitted && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[11px] text-slate-600">
-            <span className="font-bold text-slate-800">{patientName}</span> is waiting to join.
-          </p>
-          <Button
-            variant="primary"
-            size="sm"
-            className="text-xs font-bold"
-            onClick={admit}
-            disabled={busy}
-          >
-            {busy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5 mr-1.5" />}
-            Admit patient
-          </Button>
-        </div>
-      )}
-
-      {patientAdmitted && (
-        <p className="text-[11px] text-emerald-700 font-semibold">
-          {patientName} has been admitted to this consultation.
-        </p>
-      )}
-
-      {message && (
-        <p className={`text-[11px] font-semibold ${message.tone === "error" ? "text-rose-600" : "text-emerald-700"}`}>
-          {message.text}
-        </p>
-      )}
     </div>
   );
 }
@@ -613,9 +389,6 @@ function ConsultationStage({ role, appointmentId, onLeave, patientDetails }) {
         </div>
       )}
 
-      {role === "doctor" && (
-        <AdmitPanel appointmentId={appointmentId} patientDetails={patientDetails} />
-      )}
       <div className="flex gap-4">
         <div className="flex-1 space-y-4">
           <div className="relative aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
@@ -711,7 +484,6 @@ function ConsultationStage({ role, appointmentId, onLeave, patientDetails }) {
           ))}
           {participants.length <= 1 && (
             <li className="text-[11px] text-slate-400">
-              <Clock className="w-3 h-3 inline mr-1" />
               Waiting for the other participant to join…
             </li>
           )}

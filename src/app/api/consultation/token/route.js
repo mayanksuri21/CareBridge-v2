@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
-import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
+import { AccessToken } from "livekit-server-sdk";
 import { createClientServer } from "../../../../lib/supabase/server";
 import {
-  JOIN_GRACE_BEFORE_MS,
   JOIN_GRACE_AFTER_MS,
   getConsultationRoomName,
-  getWaitingRoomName,
 } from "../../../../lib/consultation";
 
 export const runtime = "nodejs";
@@ -21,9 +19,7 @@ function fail(status, code, message) {
   return NextResponse.json({ error: code, message }, { status });
 }
 
-function toHttpHost(url) {
-  return url.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://");
-}
+
 
 function withDoctorPrefix(name) {
   const trimmed = String(name ?? "").trim();
@@ -137,7 +133,6 @@ export async function POST(request) {
   const now = Date.now();
 
   const roomName = getConsultationRoomName(appointment.id);
-  const waitingRoomName = getWaitingRoomName(appointment.id);
 
   const identity = user.id;
   const displayName = await resolveDisplayName(supabase, user, isAssignedDoctor);
@@ -155,50 +150,6 @@ export async function POST(request) {
   );
 
   try {
-    // 7. Waiting Room Logic (Patients wait until doctor admits)
-    // 7. Waiting Room Logic
-    if (isPatient) {
-      const { data: admission, error: admissionError } = await supabase
-        .from("consultation_admissions")
-        .select("*")
-        .eq("appointment_id", appointment.id);
-
-      console.log("[Token API] Patient checked admission in DB:", {
-        appointmentId: appointment.id,
-        admission,
-        admissionError
-      });
-
-      const isAdmitted = Array.isArray(admission) && admission.length > 0;
-
-      if (!isAdmitted) {
-        console.log("[Token API] Patient is NOT admitted yet. Sending waiting token.");
-        const waitingToken = new AccessToken(apiKey, apiSecret, {
-          identity,
-          name: displayName,
-          ttl: ttlSeconds,
-        });
-        waitingToken.addGrant({
-          roomJoin: true,
-          room: waitingRoomName,
-          canPublish: false,
-          canSubscribe: false,
-          canPublishData: false,
-        });
-
-        return NextResponse.json({
-          status: "waiting",
-          role: "patient",
-          token: await waitingToken.toJwt(),
-          url: livekitUrl,
-          room: waitingRoomName,
-          doctorName,
-        });
-      }
-
-      console.log("[Token API] Patient IS ADMITTED! Sending active room token.");
-    }
-
     const token = new AccessToken(apiKey, apiSecret, {
       identity,
       name: displayName,
