@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext";
 import { Button } from "../../../components/ui/Button";
 import { Badge, Card } from "../../../components/ui/Card";
+import PharmacyPrices from "../../../components/PharmacyPrices";
 import {
   HeartPulse,
   User,
@@ -229,9 +230,8 @@ export default function PatientPrescriptionsPage() {
                   </div>
                   <Badge variant={prescription.status === "finalized" ? "mint" : "slate"}>
                     <span
-                      className={`inline-block w-2 h-2 rounded-full ${
-                        prescription.status === "finalized" ? "bg-brand-emerald" : "bg-amber-500"
-                      }`}
+                      className={`inline-block w-2 h-2 rounded-full ${prescription.status === "finalized" ? "bg-brand-emerald" : "bg-amber-500"
+                        }`}
                     />
                     {prescription.status === "finalized" ? "Finalized" : "Draft"}
                   </Badge>
@@ -292,6 +292,11 @@ export default function PatientPrescriptionsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Pharmacy Prices (only for finalized prescriptions) */}
+                {prescription.status === "finalized" && (
+                  <PharmacyPrices prescriptionId={prescription.id} />
+                )}
               </Card>
             ))}
           </div>

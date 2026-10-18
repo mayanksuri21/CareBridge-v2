@@ -52,6 +52,11 @@ export default function AdminDashboardShell() {
   const [docSignedUrls, setDocSignedUrls] = useState({});
   const [generatingUrl, setGeneratingUrl] = useState(false);
 
+  // Registry check state
+  const [registryCheck, setRegistryCheck] = useState(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [showRegistryJson, setShowRegistryJson] = useState(false);
+
   // Tab 2: All Users state
   const [usersList, setUsersList] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -204,6 +209,8 @@ export default function AdminDashboardShell() {
     async function fetchDocs() {
       if (!selectedApp) {
         setApplicantDocs([]);
+        setRegistryCheck(null);
+        setShowRegistryJson(false);
         return;
       }
       setReviewNotes(selectedApp.review_notes || "");
@@ -217,10 +224,50 @@ export default function AdminDashboardShell() {
         setApplicantDocs(selectedApp.doctor_documents || []);
       }
       setDocsLoading(false);
+
+      // Load registry check status
+      loadRegistryCheck(selectedApp.id);
     }
 
     fetchDocs();
   }, [selectedApp]);
+
+  const loadRegistryCheck = async (applicationId) => {
+    setRegistryLoading(true);
+    try {
+      const res = await fetch(`/api/agents/credential/status?application_id=${applicationId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setRegistryCheck(data);
+      } else {
+        setRegistryCheck(null);
+      }
+    } catch (err) {
+      console.error("Failed to load registry check:", err);
+      setRegistryCheck(null);
+    } finally {
+      setRegistryLoading(false);
+    }
+  };
+
+  const handleRerunRegistryCheck = async () => {
+    if (!selectedApp) return;
+    setRegistryLoading(true);
+    try {
+      const res = await fetch("/api/agents/credential/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ application_id: selectedApp.id }),
+      });
+      if (res.ok) {
+        await loadRegistryCheck(selectedApp.id);
+      }
+    } catch (err) {
+      console.error("Failed to rerun registry check:", err);
+    } finally {
+      setRegistryLoading(false);
+    }
+  };
 
   // Generate short-lived signed URL (60 seconds) strictly via authorized server action
   const handleGenerateSignedUrl = async (storagePath, docId) => {
@@ -377,22 +424,20 @@ export default function AdminDashboardShell() {
           <div className="flex border-b border-slate-700 gap-2 pt-2">
             <button
               onClick={() => setActiveTab("verification")}
-              className={`flex items-center gap-2 pb-3 px-3 text-xs font-bold border-b-2 transition-colors ${
-                activeTab === "verification"
-                  ? "border-emerald-500 text-emerald-400"
-                  : "border-transparent text-slate-400 hover:text-slate-200"
-              }`}
+              className={`flex items-center gap-2 pb-3 px-3 text-xs font-bold border-b-2 transition-colors ${activeTab === "verification"
+                ? "border-emerald-500 text-emerald-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
             >
               <UserCheck className="w-4 h-4" />
               Doctor Verification Requests ({applications.length})
             </button>
             <button
               onClick={() => setActiveTab("users")}
-              className={`flex items-center gap-2 pb-3 px-3 text-xs font-bold border-b-2 transition-colors ${
-                activeTab === "users"
-                  ? "border-emerald-500 text-emerald-400"
-                  : "border-transparent text-slate-400 hover:text-slate-200"
-              }`}
+              className={`flex items-center gap-2 pb-3 px-3 text-xs font-bold border-b-2 transition-colors ${activeTab === "users"
+                ? "border-emerald-500 text-emerald-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
             >
               <Users className="w-4 h-4" />
               All Registered Users {usersTotalCount > 0 ? `(${usersTotalCount})` : ""}
@@ -427,24 +472,22 @@ export default function AdminDashboardShell() {
                     <div
                       key={app.id}
                       onClick={() => setSelectedApp(app)}
-                      className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                        selectedApp?.id === app.id
-                          ? "bg-slate-700/80 border-emerald-500 shadow-md"
-                          : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800"
-                      }`}
+                      className={`p-3.5 rounded-xl border cursor-pointer transition-all ${selectedApp?.id === app.id
+                        ? "bg-slate-700/80 border-emerald-500 shadow-md"
+                        : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800"
+                        }`}
                     >
                       <div className="flex items-start justify-between">
                         <h4 className="text-sm font-bold text-white">{app.full_name}</h4>
                         <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
-                            app.status === "approved"
-                              ? "bg-emerald-950/80 text-emerald-400 border-emerald-800"
-                              : app.status === "pending"
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${app.status === "approved"
+                            ? "bg-emerald-950/80 text-emerald-400 border-emerald-800"
+                            : app.status === "pending"
                               ? "bg-blue-950/80 text-blue-400 border-blue-800"
                               : app.status === "changes_requested"
-                              ? "bg-amber-950/80 text-amber-400 border-amber-800"
-                              : "bg-rose-950/80 text-rose-400 border-rose-800"
-                          }`}
+                                ? "bg-amber-950/80 text-amber-400 border-amber-800"
+                                : "bg-rose-950/80 text-rose-400 border-rose-800"
+                            }`}
                         >
                           {app.status}
                         </span>
@@ -477,15 +520,14 @@ export default function AdminDashboardShell() {
                       </p>
                     </div>
                     <span
-                      className={`text-xs font-black uppercase px-3 py-1 rounded-full border ${
-                        selectedApp.status === "approved"
-                          ? "bg-emerald-950 text-emerald-300 border-emerald-800"
-                          : selectedApp.status === "pending"
+                      className={`text-xs font-black uppercase px-3 py-1 rounded-full border ${selectedApp.status === "approved"
+                        ? "bg-emerald-950 text-emerald-300 border-emerald-800"
+                        : selectedApp.status === "pending"
                           ? "bg-blue-950 text-blue-300 border-blue-800"
                           : selectedApp.status === "changes_requested"
-                          ? "bg-amber-950 text-amber-300 border-amber-800"
-                          : "bg-rose-950 text-rose-300 border-rose-800"
-                      }`}
+                            ? "bg-amber-950 text-amber-300 border-amber-800"
+                            : "bg-rose-950 text-rose-300 border-rose-800"
+                        }`}
                     >
                       Status: {selectedApp.status}
                     </span>
@@ -535,6 +577,124 @@ export default function AdminDashboardShell() {
                     )}
                   </div>
 
+                  {/* Registry Check Panel */}
+                  <div className="space-y-3 pt-3 border-t border-slate-700">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                        Registry Check
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        {registryLoading && (
+                          <span className="text-[11px] text-emerald-400 animate-pulse">Checking...</span>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={registryLoading}
+                          onClick={handleRerunRegistryCheck}
+                          className="text-xs border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                        >
+                          <RefreshCw className={`w-3 h-3.5 mr-1 ${registryLoading ? "animate-spin" : ""}`} />
+                          Re-run
+                        </Button>
+                      </div>
+                    </div>
+
+                    {registryCheck && registryCheck.exists && registryCheck.agentRun ? (
+                      <div className="bg-slate-900/60 rounded-xl border border-slate-700 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span
+                            className={`text-xs font-black uppercase px-2.5 py-1 rounded-full border ${registryCheck.agentRun.comparison === "match"
+                              ? "bg-emerald-950/80 text-emerald-400 border-emerald-800"
+                              : registryCheck.agentRun.comparison === "mismatch"
+                                ? "bg-rose-950/80 text-rose-400 border-rose-800"
+                                : registryCheck.agentRun.status === "running"
+                                  ? "bg-blue-950/80 text-blue-400 border-blue-800"
+                                  : "bg-slate-800 text-slate-400 border-slate-700"
+                              }`}
+                          >
+                            {registryCheck.agentRun.comparison === "match"
+                              ? "Match"
+                              : registryCheck.agentRun.comparison === "mismatch"
+                                ? "Mismatch"
+                                : registryCheck.agentRun.status === "running"
+                                  ? "Running"
+                                  : "Unverified"}
+                          </span>
+                          <button
+                            onClick={() => setShowRegistryJson(!showRegistryJson)}
+                            className="text-[10px] text-slate-500 hover:text-slate-300 underline"
+                          >
+                            {showRegistryJson ? "Hide" : "Show"} Raw JSON
+                          </button>
+                        </div>
+
+                        {registryCheck.agentRun.status === "running" && (
+                          <p className="text-xs text-slate-400">Agent is checking the registry...</p>
+                        )}
+
+                        {registryCheck.agentRun.comparison === "unverified" && (
+                          <p className="text-xs text-amber-300">
+                            Registry could not be checked automatically. Verify manually.
+                          </p>
+                        )}
+
+                        {registryCheck.agentRun.result && (
+                          <div className="space-y-2 text-xs">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <span className="text-slate-500">Registry Name:</span>
+                                <p className="font-semibold text-slate-200">
+                                  {registryCheck.agentRun.result.name || "N/A"}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Applicant Name:</span>
+                                <p className="font-semibold text-slate-200">{selectedApp?.full_name || "N/A"}</p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Registry Status:</span>
+                                <p className="font-semibold text-slate-200">
+                                  {registryCheck.agentRun.result.status || "N/A"}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Specialty:</span>
+                                <p className="font-semibold text-slate-200">
+                                  {registryCheck.agentRun.result.specialty || "N/A"}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Council:</span>
+                                <p className="font-semibold text-slate-200">
+                                  {registryCheck.agentRun.result.council || "N/A"}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Blocked:</span>
+                                <p className="font-semibold text-slate-200">
+                                  {registryCheck.agentRun.result.blocked ? "Yes" : "No"}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {showRegistryJson && (
+                          <div className="bg-slate-950 rounded-lg p-3 overflow-x-auto">
+                            <pre className="text-[10px] text-slate-400 font-mono">
+                              {JSON.stringify(registryCheck.agentRun.result || registryCheck.agentRun, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 italic bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+                        No registry check run yet. Click &quot;Re-run&quot; to start verification.
+                      </p>
+                    )}
+                  </div>
+
                   {/* Submitted Credential Documents with Signed URLs */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -548,12 +708,12 @@ export default function AdminDashboardShell() {
 
                     {/* Missing Registration Document Alert */}
                     {applicantDocs.length === 0 ||
-                    !applicantDocs.some(
-                      (d) =>
-                        d.document_type?.toLowerCase().includes("registration") ||
-                        d.document_type?.toLowerCase().includes("nmc") ||
-                        d.file_name?.toLowerCase().includes("registration")
-                    ) ? (
+                      !applicantDocs.some(
+                        (d) =>
+                          d.document_type?.toLowerCase().includes("registration") ||
+                          d.document_type?.toLowerCase().includes("nmc") ||
+                          d.file_name?.toLowerCase().includes("registration")
+                      ) ? (
                       <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-800 text-amber-200 text-xs flex items-center gap-2.5">
                         <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
                         <div>
@@ -679,12 +839,12 @@ export default function AdminDashboardShell() {
                         className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                         title={
                           applicantDocs.length === 0 ||
-                          !applicantDocs.some(
-                            (d) =>
-                              d.document_type?.toLowerCase().includes("registration") ||
-                              d.document_type?.toLowerCase().includes("nmc") ||
-                              d.file_name?.toLowerCase().includes("registration")
-                          )
+                            !applicantDocs.some(
+                              (d) =>
+                                d.document_type?.toLowerCase().includes("registration") ||
+                                d.document_type?.toLowerCase().includes("nmc") ||
+                                d.file_name?.toLowerCase().includes("registration")
+                            )
                             ? "Cannot approve without a verified registration certificate."
                             : "Approve Doctor"
                         }
@@ -814,13 +974,12 @@ export default function AdminDashboardShell() {
                         </td>
                         <td className="py-3 px-4">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase border ${
-                              u.role === "admin"
-                                ? "bg-rose-950/80 text-rose-300 border-rose-800"
-                                : u.role === "doctor"
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase border ${u.role === "admin"
+                              ? "bg-rose-950/80 text-rose-300 border-rose-800"
+                              : u.role === "doctor"
                                 ? "bg-emerald-950/80 text-emerald-400 border-emerald-800"
                                 : "bg-slate-800 text-slate-300 border-slate-700"
-                            }`}
+                              }`}
                           >
                             {u.role}
                           </span>
@@ -831,13 +990,12 @@ export default function AdminDashboardShell() {
                         <td className="py-3 px-4">
                           {u.doctor_app_status ? (
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                                u.doctor_app_status === "approved"
-                                  ? "bg-emerald-950/60 text-emerald-400 border-emerald-800"
-                                  : u.doctor_app_status === "pending"
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${u.doctor_app_status === "approved"
+                                ? "bg-emerald-950/60 text-emerald-400 border-emerald-800"
+                                : u.doctor_app_status === "pending"
                                   ? "bg-blue-950/60 text-blue-400 border-blue-800"
                                   : "bg-amber-950/60 text-amber-400 border-amber-800"
-                              }`}
+                                }`}
                             >
                               {u.doctor_app_status}
                             </span>
